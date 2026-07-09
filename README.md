@@ -18,6 +18,7 @@ A no-build Microsoft Edge extension that opens a VS Code-like command panel on t
 - Type part of a title, URL, bookmark folder path, pinyin, or pinyin initials to filter both sections. Pinyin search is powered by vendored `pinyin-pro`.
 - Type `theme`, `light`, `dark`, `明亮`, `暗黑`, or related pinyin to show built-in theme commands.
 - Type `newtab`, `new tab`, `close tab`, `reload`, `新建标签页`, `关闭标签页`, `重新加载窗口`, or related pinyin to show tab management commands.
+- Type `help`, `帮助`, `内置命令`, or related pinyin to show all built-in commands.
 - Press `ArrowDown` or `ArrowUp` to move through results.
 - Press `Enter` to activate the selected tab, open the selected bookmark in a new active tab, or run the selected built-in command.
 - Press `Escape` or click outside the panel to close it.

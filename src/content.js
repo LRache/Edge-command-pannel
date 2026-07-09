@@ -30,6 +30,15 @@
   const BUILT_IN_COMMANDS = [
     {
       type: ITEM_TYPES.COMMAND,
+      id: "help-built-in-commands",
+      title: "Help: Show Built-in Commands",
+      subtitle: "Show all available built-in command panel commands",
+      iconText: "?",
+      action: "show-built-in-commands",
+      aliases: "help commands builtin built-in command list show commands 帮助 命令 内置命令 查看命令 bangzhu mingling neizhimingling chakana mingling"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
       id: "theme-light",
       title: "Theme: Use Light",
       subtitle: "Switch command panel to the light color style",
@@ -136,7 +145,7 @@
       state.sections[ITEM_TYPES.TAB] = [];
       state.sections[ITEM_TYPES.BOOKMARK] = [];
       state.visibleItems = [];
-      renderResults({ tabs: [], bookmarks: [] });
+      renderResults({ tabs: [], bookmarks: [], commands: [] });
       setStatus(error.message || "Unable to load command panel items.");
     }
   }
@@ -177,10 +186,10 @@
     state.input = document.createElement("input");
     state.input.className = "ecp-input";
     state.input.type = "search";
-    state.input.placeholder = "Search recent tabs and bookmark bar";
+    state.input.placeholder = "Search recent tabs, bookmark bar, and commands";
     state.input.autocomplete = "off";
     state.input.spellcheck = false;
-    state.input.setAttribute("aria-label", "Search recent tabs and bookmark bar");
+    state.input.setAttribute("aria-label", "Search recent tabs, bookmark bar, and commands");
     state.input.addEventListener("input", () => applyFilter(state.input.value));
     state.input.addEventListener("keydown", handleKeyDown);
 
@@ -191,7 +200,7 @@
     state.list = document.createElement("div");
     state.list.className = "ecp-list";
     state.list.setAttribute("role", "listbox");
-    state.list.setAttribute("aria-label", "Recent tabs and bookmark bar");
+    state.list.setAttribute("aria-label", "Recent tabs, bookmark bar, and commands");
 
     panel.append(state.input, state.status, state.list);
     state.root.append(backdrop, panel);
@@ -316,12 +325,21 @@
     return command[key];
   }
 
-  function renderResults({ tabs, bookmarks, commands }) {
+  function renderResults({
+    tabs = [],
+    bookmarks = [],
+    commands = [],
+    includeEmptySections = true
+  }) {
     state.list.textContent = "";
 
     const fragment = document.createDocumentFragment();
-    appendSection(fragment, "Recent Tabs", tabs, "No matching recent tabs");
-    appendSection(fragment, "Bookmark Bar", bookmarks, "No matching bookmark bar items");
+    if (includeEmptySections || tabs.length > 0) {
+      appendSection(fragment, "Recent Tabs", tabs, "No matching recent tabs");
+    }
+    if (includeEmptySections || bookmarks.length > 0) {
+      appendSection(fragment, "Bookmark Bar", bookmarks, "No matching bookmark bar items");
+    }
     if (commands.length > 0) {
       appendSection(fragment, "Built-in Commands", commands, "");
     }
@@ -489,6 +507,10 @@
       return;
     }
 
+    if (response.keepOpen) {
+      return;
+    }
+
     if (item.type !== ITEM_TYPES.COMMAND || item.action) {
       closePanel();
     }
@@ -538,6 +560,11 @@
       return chrome.runtime.sendMessage({ type: MESSAGE_TYPES.RELOAD_CURRENT_TAB });
     }
 
+    if (command.action === "show-built-in-commands") {
+      showBuiltInCommands();
+      return { ok: true, keepOpen: true };
+    }
+
     if (!command.theme) {
       return { ok: false, error: "Invalid command." };
     }
@@ -561,6 +588,19 @@
     if (state.root) {
       state.root.dataset.theme = state.theme;
     }
+  }
+
+  function showBuiltInCommands() {
+    state.input.value = "help";
+    state.selectedIndex = 0;
+    state.visibleItems = [...BUILT_IN_COMMANDS];
+    renderResults({
+      tabs: [],
+      bookmarks: [],
+      commands: BUILT_IN_COMMANDS,
+      includeEmptySections: false
+    });
+    setStatus(`${BUILT_IN_COMMANDS.length} built-in commands`);
   }
 
   function setStatus(message) {
