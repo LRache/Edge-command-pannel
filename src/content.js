@@ -239,7 +239,7 @@
   function applyFilter(query) {
     const normalizedQuery = pinyinSearch.normalizeSearchTerm(query);
     const tabs = filterTabs(normalizedQuery);
-    const bookmarks = filterItems(state.sections[ITEM_TYPES.BOOKMARK], normalizedQuery);
+    const bookmarks = filterBookmarks(normalizedQuery);
     const commands = filterCommands(normalizedQuery);
 
     state.visibleItems = [...tabs, ...bookmarks, ...commands];
@@ -273,6 +273,37 @@
   function filterTabs(normalizedQuery) {
     const tabs = filterItems(state.sections[ITEM_TYPES.TAB], normalizedQuery);
     return normalizedQuery ? tabs : tabs.slice(0, RECENT_TAB_DISPLAY_LIMIT);
+  }
+
+  function filterBookmarks(normalizedQuery) {
+    const bookmarks = state.sections[ITEM_TYPES.BOOKMARK];
+    if (!normalizedQuery) {
+      return [...bookmarks];
+    }
+
+    return bookmarks
+      .map((bookmark, index) => ({
+        bookmark,
+        index,
+        score: scoreBookmark(bookmark, normalizedQuery)
+      }))
+      .filter((result) => result.score > 0)
+      .sort((a, b) => b.score - a.score || a.index - b.index)
+      .map((result) => result.bookmark);
+  }
+
+  function scoreBookmark(bookmark, normalizedQuery) {
+    const titleScore = scoreText(getItemFieldSearchText(bookmark, "title"), normalizedQuery, 300);
+    if (titleScore > 0) {
+      return titleScore;
+    }
+
+    const urlScore = scoreText(getItemFieldSearchText(bookmark, "url"), normalizedQuery, 200);
+    if (urlScore > 0) {
+      return urlScore;
+    }
+
+    return scoreText(getItemFieldSearchText(bookmark, "path"), normalizedQuery, 100);
   }
 
   function filterCommands(normalizedQuery) {
@@ -317,12 +348,16 @@
   }
 
   function getCommandSearchText(command, field) {
+    return getItemFieldSearchText(command, field);
+  }
+
+  function getItemFieldSearchText(item, field) {
     const key = `${field}SearchText`;
-    if (!command[key]) {
-      command[key] = pinyinSearch.buildSearchText(command[field] || "");
+    if (!item[key]) {
+      item[key] = pinyinSearch.buildSearchText(item[field] || "");
     }
 
-    return command[key];
+    return item[key];
   }
 
   function renderResults({

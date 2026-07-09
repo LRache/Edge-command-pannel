@@ -16,6 +16,7 @@ A no-build Microsoft Edge extension that opens a VS Code-like command panel on t
 - The top section shows the 8 most recently active tabs in the current window, while search can still find any other non-current tab in that window.
 - The bottom section shows items from the bookmark bar.
 - Type part of a title, URL, bookmark folder path, pinyin, or pinyin initials to filter both sections. Pinyin search is powered by vendored `pinyin-pro`.
+- Bookmark searches rank title matches before URL matches, then bookmark folder path matches.
 - Type `theme`, `light`, `dark`, `明亮`, `暗黑`, or related pinyin to show built-in theme commands.
 - Type `newtab`, `new tab`, `close tab`, `reload`, `新建标签页`, `关闭标签页`, `重新加载窗口`, or related pinyin to show tab management commands.
 - Type `help`, `帮助`, `内置命令`, or related pinyin to show all built-in commands.
