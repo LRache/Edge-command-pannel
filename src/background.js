@@ -3,9 +3,15 @@ const MESSAGE_TYPES = {
   TOGGLE_PANEL: "TOGGLE_PANEL",
   GET_TABS: "GET_TABS",
   GET_BOOKMARKS: "GET_BOOKMARKS",
+  GET_THEME: "GET_THEME",
+  SET_THEME: "SET_THEME",
   ACTIVATE_TAB: "ACTIVATE_TAB",
   OPEN_BOOKMARK: "OPEN_BOOKMARK"
 };
+
+const DEFAULT_THEME = "dark";
+const THEME_STORAGE_KEY = "commandPanelTheme";
+const THEMES = new Set(["light", "dark"]);
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command !== "toggle-command-panel") {
@@ -46,6 +52,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === MESSAGE_TYPES.GET_THEME) {
+    getTheme()
+      .then((theme) => sendResponse({ ok: true, theme }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === MESSAGE_TYPES.SET_THEME) {
+    setTheme(message.theme)
+      .then((theme) => sendResponse({ ok: true, theme }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message?.type === MESSAGE_TYPES.ACTIVATE_TAB) {
     activateTab(message.tabId)
       .then(() => sendResponse({ ok: true }))
@@ -79,7 +99,7 @@ async function ensurePanelInjected(tabId) {
     });
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["src/content.js"]
+      files: ["src/vendor/pinyin-pro.js", "src/pinyin.js", "src/content.js"]
     });
   }
 }
@@ -126,7 +146,29 @@ async function openBookmark(url, windowId) {
     createProperties.windowId = windowId;
   }
 
-  await chrome.tabs.create(createProperties);
+  const tab = await chrome.tabs.create(createProperties);
+  if (Number.isInteger(windowId)) {
+    await chrome.windows.update(windowId, { focused: true });
+  }
+
+  if (Number.isInteger(tab.id)) {
+    await chrome.tabs.update(tab.id, { active: true });
+  }
+}
+
+async function getTheme() {
+  const values = await chrome.storage.local.get(THEME_STORAGE_KEY);
+  const theme = values[THEME_STORAGE_KEY];
+  return THEMES.has(theme) ? theme : DEFAULT_THEME;
+}
+
+async function setTheme(theme) {
+  if (!THEMES.has(theme)) {
+    throw new Error("Unsupported theme.");
+  }
+
+  await chrome.storage.local.set({ [THEME_STORAGE_KEY]: theme });
+  return theme;
 }
 
 function isSupportedTabUrl(url = "") {
@@ -155,6 +197,7 @@ function flattenBookmarks(nodes, folderPath, output) {
           id: node.id,
           title: node.title || node.url,
           url: node.url,
+          favIconUrl: getFaviconUrl(node.url),
           path: folderPath.join(" / ")
         });
       }
@@ -173,4 +216,11 @@ function compareBookmarkTitle(a, b) {
 function findBookmarkBar(tree) {
   const rootChildren = tree[0]?.children || [];
   return rootChildren.find((node) => node.id === "1") || rootChildren[0];
+}
+
+function getFaviconUrl(pageUrl) {
+  const faviconUrl = new URL(chrome.runtime.getURL("/_favicon/"));
+  faviconUrl.searchParams.set("pageUrl", pageUrl);
+  faviconUrl.searchParams.set("size", "32");
+  return faviconUrl.toString();
 }

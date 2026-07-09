@@ -3,7 +3,7 @@
   "name": "Edge Command Panel",
   "description": "Open a VS Code-like command panel to search recent tabs and bookmark bar items.",
   "version": "0.1.0",
-  "permissions": ["tabs", "scripting", "bookmarks"],
+  "permissions": ["tabs", "scripting", "bookmarks", "favicon", "storage"],
   "action": {
     "default_title": "Open tab command panel"
   },
@@ -22,9 +22,15 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["src/content.js"],
+      "js": ["src/vendor/pinyin-pro.js", "src/pinyin.js", "src/content.js"],
       "css": ["src/panel.css"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["_favicon/*"],
+      "matches": ["http://*/*", "https://*/*"]
     }
   ]
 }

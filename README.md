@@ -1,6 +1,6 @@
 # Edge Command Panel
 
-A dependency-free Microsoft Edge extension that opens a VS Code-like command panel on the current webpage. It shows recent tabs and bookmark bar items together in two visual sections: tabs on top, bookmarks below.
+A no-build Microsoft Edge extension that opens a VS Code-like command panel on the current webpage. It shows recent tabs and bookmark bar items together in two visual sections: tabs on top, bookmarks below.
 
 ## Install for local development
 
@@ -15,9 +15,10 @@ A dependency-free Microsoft Edge extension that opens a VS Code-like command pan
 - You can also click the extension icon in the toolbar to open or close the panel.
 - The top section shows the 8 most recently active tabs in the current window, while search can still find any other non-current tab in that window.
 - The bottom section shows items from the bookmark bar.
-- Type part of a title, URL, or bookmark folder path to filter both sections.
+- Type part of a title, URL, bookmark folder path, pinyin, or pinyin initials to filter both sections. Pinyin search is powered by vendored `pinyin-pro`.
+- Type `theme`, `light`, `dark`, `明亮`, `暗黑`, or related pinyin to show built-in theme commands.
 - Press `ArrowDown` or `ArrowUp` to move through results.
-- Press `Enter` to activate the selected tab or open the selected bookmark in a new active tab.
+- Press `Enter` to activate the selected tab, open the selected bookmark in a new active tab, or run the selected built-in command.
 - Press `Escape` or click outside the panel to close it.
 
 The shortcut can be changed from `edge://extensions/shortcuts`.
@@ -31,6 +32,8 @@ The overlay is injected only into normal `http://` and `https://` pages. Browser
 ## Project structure
 
 - `manifest.json` declares the Manifest V3 extension, permissions, shortcut, background service worker, and content script.
-- `src/background.js` handles the keyboard command, reads recent tabs and bookmark bar items, activates tabs, and opens bookmarks.
+- `src/background.js` handles the keyboard command, reads recent tabs and bookmark bar items, resolves favicons, persists the theme, activates tabs, and opens bookmarks.
 - `src/content.js` renders the command panel sections and manages search, keyboard navigation, and selection.
+- `src/pinyin.js` wraps the vendored `pinyin-pro` library for full-pinyin and pinyin-initial search indexing.
+- `src/vendor/pinyin-pro.js` is the MIT-licensed browser build of `pinyin-pro`.
 - `src/panel.css` styles the overlay.

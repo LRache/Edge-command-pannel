@@ -10,16 +10,40 @@
     TOGGLE_PANEL: "TOGGLE_PANEL",
     GET_TABS: "GET_TABS",
     GET_BOOKMARKS: "GET_BOOKMARKS",
+    GET_THEME: "GET_THEME",
+    SET_THEME: "SET_THEME",
     ACTIVATE_TAB: "ACTIVATE_TAB",
     OPEN_BOOKMARK: "OPEN_BOOKMARK"
   };
 
   const ITEM_TYPES = {
     TAB: "tab",
-    BOOKMARK: "bookmark"
+    BOOKMARK: "bookmark",
+    COMMAND: "command"
   };
 
   const RECENT_TAB_DISPLAY_LIMIT = 8;
+  const pinyinSearch = globalThis.EdgeCommandPanelPinyin;
+  const THEME_COMMANDS = [
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "theme-light",
+      title: "Theme: Use Light",
+      subtitle: "Switch command panel to the light color style",
+      iconText: "L",
+      theme: "light",
+      aliases: "theme light light theme 切换 明亮 亮色 浅色 白色 主题 明亮主题 qiehuan qhzt mingliang liangse"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "theme-dark",
+      title: "Theme: Use Dark",
+      subtitle: "Switch command panel to the dark color style",
+      iconText: "D",
+      theme: "dark",
+      aliases: "theme dark dark theme 切换 暗黑 深色 黑色 夜间 主题 暗黑主题 qiehuan qhzt anhei shense"
+    }
+  ];
 
   const state = {
     root: null,
@@ -32,6 +56,7 @@
     },
     visibleItems: [],
     selectedIndex: 0,
+    theme: "dark",
     previousFocus: null
   };
 
@@ -67,7 +92,12 @@
     state.list.textContent = "";
 
     try {
-      const [tabs, bookmarks] = await Promise.all([requestTabs(), requestBookmarks()]);
+      const [theme, tabs, bookmarks] = await Promise.all([
+        requestTheme(),
+        requestTabs(),
+        requestBookmarks()
+      ]);
+      applyTheme(theme);
       state.sections[ITEM_TYPES.TAB] = tabs;
       state.sections[ITEM_TYPES.BOOKMARK] = bookmarks;
       applyFilter("");
@@ -98,6 +128,7 @@
 
     state.root = document.createElement("div");
     state.root.className = "ecp-root";
+    state.root.dataset.theme = state.theme;
     state.root.hidden = true;
     state.root.setAttribute("role", "dialog");
     state.root.setAttribute("aria-modal", "true");
@@ -156,17 +187,27 @@
     }));
   }
 
+  async function requestTheme() {
+    const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPES.GET_THEME });
+    if (!response?.ok) {
+      throw new Error(response?.error || "Unable to load theme.");
+    }
+
+    return response.theme || "dark";
+  }
+
   function applyFilter(query) {
-    const normalizedQuery = normalize(query);
+    const normalizedQuery = pinyinSearch.normalizeSearchTerm(query);
     const tabs = filterTabs(normalizedQuery);
     const bookmarks = filterItems(state.sections[ITEM_TYPES.BOOKMARK], normalizedQuery);
+    const commands = filterCommands(normalizedQuery);
 
-    state.visibleItems = [...tabs, ...bookmarks];
+    state.visibleItems = [...tabs, ...bookmarks, ...commands];
     if (state.selectedIndex >= state.visibleItems.length) {
       state.selectedIndex = Math.max(0, state.visibleItems.length - 1);
     }
 
-    renderResults({ tabs, bookmarks });
+    renderResults({ tabs, bookmarks, commands });
   }
 
   function filterItems(items, normalizedQuery) {
@@ -175,9 +216,18 @@
     }
 
     return items.filter((item) => {
-      const searchable = `${item.title || ""} ${item.url || ""} ${item.path || ""}`;
-      return normalize(searchable).includes(normalizedQuery);
+      return getSearchText(item).includes(normalizedQuery);
     });
+  }
+
+  function getSearchText(item) {
+    if (!item.searchText) {
+      item.searchText = pinyinSearch.buildSearchText(
+        `${item.title || ""} ${item.subtitle || ""} ${item.url || ""} ${item.path || ""} ${item.aliases || ""}`
+      );
+    }
+
+    return item.searchText;
   }
 
   function filterTabs(normalizedQuery) {
@@ -185,18 +235,31 @@
     return normalizedQuery ? tabs : tabs.slice(0, RECENT_TAB_DISPLAY_LIMIT);
   }
 
-  function renderResults({ tabs, bookmarks }) {
+  function filterCommands(normalizedQuery) {
+    if (!normalizedQuery) {
+      return [];
+    }
+
+    return THEME_COMMANDS.filter((command) => getSearchText(command).includes(normalizedQuery));
+  }
+
+  function renderResults({ tabs, bookmarks, commands }) {
     state.list.textContent = "";
 
     const fragment = document.createDocumentFragment();
     appendSection(fragment, "Recent Tabs", tabs, "No matching recent tabs");
     appendSection(fragment, "Bookmark Bar", bookmarks, "No matching bookmark bar items");
+    if (commands.length > 0) {
+      appendSection(fragment, "Built-in Commands", commands, "");
+    }
     state.list.append(fragment);
     syncSelectedItem();
 
     const tabLabel = `${tabs.length} recent tab${tabs.length === 1 ? "" : "s"}`;
     const bookmarkLabel = `${bookmarks.length} bookmark${bookmarks.length === 1 ? "" : "s"}`;
-    setStatus(`${tabLabel}, ${bookmarkLabel}`);
+    const commandLabel =
+      commands.length > 0 ? `, ${commands.length} command${commands.length === 1 ? "" : "s"}` : "";
+    setStatus(`${tabLabel}, ${bookmarkLabel}${commandLabel}`);
   }
 
   function appendSection(fragment, title, items, emptyText) {
@@ -249,6 +312,7 @@
       icon.append(image);
     } else {
       icon.textContent = item.type === ITEM_TYPES.TAB ? "T" : "B";
+      icon.textContent = item.iconText || icon.textContent;
     }
 
     const body = document.createElement("span");
@@ -261,6 +325,9 @@
     const url = document.createElement("span");
     url.className = "ecp-url";
     url.textContent =
+      item.type === ITEM_TYPES.COMMAND
+        ? item.subtitle
+        :
       item.type === ITEM_TYPES.BOOKMARK && item.path
         ? `${item.path} - ${cleanUrl(item.url)}`
         : cleanUrl(item.url);
@@ -330,13 +397,20 @@
       return;
     }
 
-    const response = item.type === ITEM_TYPES.TAB ? await activateTab(item) : await openBookmark(item);
+    const response =
+      item.type === ITEM_TYPES.TAB
+        ? await activateTab(item)
+        : item.type === ITEM_TYPES.BOOKMARK
+          ? await openBookmark(item)
+          : await runCommand(item);
     if (!response?.ok) {
       setStatus(response?.error || "Unable to open item.");
       return;
     }
 
-    closePanel();
+    if (item.type !== ITEM_TYPES.COMMAND) {
+      closePanel();
+    }
   }
 
   async function activateTab(tab) {
@@ -363,12 +437,34 @@
     });
   }
 
-  function setStatus(message) {
-    state.status.textContent = message;
+  async function runCommand(command) {
+    if (!command?.theme) {
+      return { ok: false, error: "Invalid command." };
+    }
+
+    setStatus(`Switching to ${command.theme} theme...`);
+    const response = await chrome.runtime.sendMessage({
+      type: MESSAGE_TYPES.SET_THEME,
+      theme: command.theme
+    });
+
+    if (response?.ok) {
+      applyTheme(response.theme);
+      setStatus(`Using ${response.theme} theme.`);
+    }
+
+    return response;
   }
 
-  function normalize(value) {
-    return String(value || "").trim().toLocaleLowerCase();
+  function applyTheme(theme) {
+    state.theme = theme === "light" ? "light" : "dark";
+    if (state.root) {
+      state.root.dataset.theme = state.theme;
+    }
+  }
+
+  function setStatus(message) {
+    state.status.textContent = message;
   }
 
   function cleanUrl(url) {
