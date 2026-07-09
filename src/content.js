@@ -12,6 +12,9 @@
     GET_BOOKMARKS: "GET_BOOKMARKS",
     GET_THEME: "GET_THEME",
     SET_THEME: "SET_THEME",
+    NEW_TAB: "NEW_TAB",
+    CLOSE_CURRENT_TAB: "CLOSE_CURRENT_TAB",
+    RELOAD_CURRENT_TAB: "RELOAD_CURRENT_TAB",
     ACTIVATE_TAB: "ACTIVATE_TAB",
     OPEN_BOOKMARK: "OPEN_BOOKMARK"
   };
@@ -24,7 +27,7 @@
 
   const RECENT_TAB_DISPLAY_LIMIT = 8;
   const pinyinSearch = globalThis.EdgeCommandPanelPinyin;
-  const THEME_COMMANDS = [
+  const BUILT_IN_COMMANDS = [
     {
       type: ITEM_TYPES.COMMAND,
       id: "theme-light",
@@ -42,6 +45,33 @@
       iconText: "D",
       theme: "dark",
       aliases: "theme dark dark theme 切换 暗黑 深色 黑色 夜间 主题 暗黑主题 qiehuan qhzt anhei shense"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "tab-new",
+      title: "Tab: New Tab",
+      subtitle: "Open a new active tab in the current window",
+      iconText: "+",
+      action: "new-tab",
+      aliases: "tab new newtab new tab create tab 新建标签页 新标签页 打开标签页 xinjian biaoqianye xjbqy xinbiaoqianye"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "tab-close-current",
+      title: "Tab: Close Current Tab",
+      subtitle: "Close the tab that is showing the command panel",
+      iconText: "X",
+      action: "close-current-tab",
+      aliases: "tab close close tab close current tab 关闭标签页 关闭当前标签页 删除标签页 guanbi biaoqianye gbbqy guanbidangqianbiaoqianye"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "window-reload",
+      title: "Window: Reload",
+      subtitle: "Reload the current tab that is showing the command panel",
+      iconText: "R",
+      action: "reload-current-tab",
+      aliases: "reload refresh reload window reload tab window reload current tab 重新加载窗口 重新加载标签页 刷新 刷新页面 chongxin jiazai chuangkou cxjzck shuaxin"
     }
   ];
 
@@ -57,7 +87,8 @@
     visibleItems: [],
     selectedIndex: 0,
     theme: "dark",
-    previousFocus: null
+    previousFocus: null,
+    ignoreMouseSelectionUntil: 0
   };
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -240,7 +271,49 @@
       return [];
     }
 
-    return THEME_COMMANDS.filter((command) => getSearchText(command).includes(normalizedQuery));
+    return BUILT_IN_COMMANDS.map((command, index) => ({
+      command,
+      index,
+      score: scoreCommand(command, normalizedQuery)
+    }))
+      .filter((result) => result.score > 0)
+      .sort((a, b) => b.score - a.score || a.index - b.index)
+      .map((result) => result.command);
+  }
+
+  function scoreCommand(command, normalizedQuery) {
+    const titleScore = scoreText(getCommandSearchText(command, "title"), normalizedQuery, 300);
+    if (titleScore > 0) {
+      return titleScore;
+    }
+
+    const subtitleScore = scoreText(getCommandSearchText(command, "subtitle"), normalizedQuery, 200);
+    if (subtitleScore > 0) {
+      return subtitleScore;
+    }
+
+    return scoreText(getCommandSearchText(command, "aliases"), normalizedQuery, 100);
+  }
+
+  function scoreText(searchText, normalizedQuery, baseScore) {
+    if (searchText.startsWith(normalizedQuery)) {
+      return baseScore + 50;
+    }
+
+    if (searchText.includes(` ${normalizedQuery}`)) {
+      return baseScore + 25;
+    }
+
+    return searchText.includes(normalizedQuery) ? baseScore : 0;
+  }
+
+  function getCommandSearchText(command, field) {
+    const key = `${field}SearchText`;
+    if (!command[key]) {
+      command[key] = pinyinSearch.buildSearchText(command[field] || "");
+    }
+
+    return command[key];
   }
 
   function renderResults({ tabs, bookmarks, commands }) {
@@ -296,7 +369,14 @@
     const itemIndex = state.visibleItems.indexOf(item);
     option.setAttribute("aria-selected", String(itemIndex === state.selectedIndex));
     option.dataset.selected = String(itemIndex === state.selectedIndex);
+    option.addEventListener("mousemove", () => {
+      state.ignoreMouseSelectionUntil = 0;
+    });
     option.addEventListener("mouseenter", () => {
+      if (Date.now() < state.ignoreMouseSelectionUntil) {
+        return;
+      }
+
       state.selectedIndex = itemIndex;
       syncSelectedItem();
     });
@@ -388,6 +468,7 @@
 
     state.selectedIndex =
       (state.selectedIndex + delta + state.visibleItems.length) % state.visibleItems.length;
+    state.ignoreMouseSelectionUntil = Date.now() + 250;
     syncSelectedItem();
   }
 
@@ -408,7 +489,7 @@
       return;
     }
 
-    if (item.type !== ITEM_TYPES.COMMAND) {
+    if (item.type !== ITEM_TYPES.COMMAND || item.action) {
       closePanel();
     }
   }
@@ -438,7 +519,26 @@
   }
 
   async function runCommand(command) {
-    if (!command?.theme) {
+    if (!command) {
+      return { ok: false, error: "Invalid command." };
+    }
+
+    if (command.action === "new-tab") {
+      setStatus("Opening new tab...");
+      return chrome.runtime.sendMessage({ type: MESSAGE_TYPES.NEW_TAB });
+    }
+
+    if (command.action === "close-current-tab") {
+      setStatus("Closing current tab...");
+      return chrome.runtime.sendMessage({ type: MESSAGE_TYPES.CLOSE_CURRENT_TAB });
+    }
+
+    if (command.action === "reload-current-tab") {
+      setStatus("Reloading current tab...");
+      return chrome.runtime.sendMessage({ type: MESSAGE_TYPES.RELOAD_CURRENT_TAB });
+    }
+
+    if (!command.theme) {
       return { ok: false, error: "Invalid command." };
     }
 

@@ -5,6 +5,9 @@ const MESSAGE_TYPES = {
   GET_BOOKMARKS: "GET_BOOKMARKS",
   GET_THEME: "GET_THEME",
   SET_THEME: "SET_THEME",
+  NEW_TAB: "NEW_TAB",
+  CLOSE_CURRENT_TAB: "CLOSE_CURRENT_TAB",
+  RELOAD_CURRENT_TAB: "RELOAD_CURRENT_TAB",
   ACTIVATE_TAB: "ACTIVATE_TAB",
   OPEN_BOOKMARK: "OPEN_BOOKMARK"
 };
@@ -62,6 +65,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === MESSAGE_TYPES.SET_THEME) {
     setTheme(message.theme)
       .then((theme) => sendResponse({ ok: true, theme }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === MESSAGE_TYPES.NEW_TAB) {
+    openNewTab(sender.tab?.windowId)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === MESSAGE_TYPES.CLOSE_CURRENT_TAB) {
+    closeCurrentTab(sender.tab?.id)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === MESSAGE_TYPES.RELOAD_CURRENT_TAB) {
+    reloadCurrentTab(sender.tab?.id)
+      .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
@@ -154,6 +178,40 @@ async function openBookmark(url, windowId) {
   if (Number.isInteger(tab.id)) {
     await chrome.tabs.update(tab.id, { active: true });
   }
+}
+
+async function openNewTab(windowId) {
+  const createProperties = { active: true };
+  if (Number.isInteger(windowId)) {
+    createProperties.windowId = windowId;
+  }
+
+  const tab = await chrome.tabs.create(createProperties);
+  if (Number.isInteger(windowId)) {
+    await chrome.windows.update(windowId, { focused: true });
+  }
+
+  if (Number.isInteger(tab.id)) {
+    await chrome.tabs.update(tab.id, { active: true });
+  }
+}
+
+async function closeCurrentTab(tabId) {
+  if (!Number.isInteger(tabId)) {
+    throw new Error("Invalid current tab.");
+  }
+
+  await chrome.tabs.remove(tabId);
+}
+
+async function reloadCurrentTab(tabId) {
+  if (!Number.isInteger(tabId)) {
+    throw new Error("Invalid current tab.");
+  }
+
+  setTimeout(() => {
+    chrome.tabs.reload(tabId);
+  }, 0);
 }
 
 async function getTheme() {
