@@ -1,0 +1,207 @@
+.ecp-root,
+.ecp-root * {
+  box-sizing: border-box;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+.ecp-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  color: #d4d4d4;
+}
+
+.ecp-root[hidden] {
+  display: none;
+}
+
+.ecp-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: rgba(8, 8, 8, 0.42);
+  cursor: default;
+}
+
+.ecp-panel {
+  position: relative;
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(620px, calc(100vh - 80px));
+  margin: 72px auto 0;
+  overflow: hidden;
+  border: 1px solid #3c3c3c;
+  border-radius: 8px;
+  background: #252526;
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.ecp-input {
+  display: block;
+  width: 100%;
+  height: 48px;
+  padding: 0 16px;
+  border: 0;
+  border-bottom: 1px solid #3c3c3c;
+  outline: 0;
+  background: #1e1e1e;
+  color: #f3f3f3;
+  font-size: 16px;
+  line-height: 48px;
+}
+
+.ecp-input::placeholder {
+  color: #858585;
+}
+
+.ecp-input:focus {
+  box-shadow: inset 0 0 0 1px #007acc;
+}
+
+.ecp-input::-webkit-search-decoration,
+.ecp-input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.ecp-status {
+  min-height: 28px;
+  padding: 7px 12px 6px;
+  border-bottom: 1px solid #333333;
+  color: #9d9d9d;
+  font-size: 12px;
+  line-height: 15px;
+}
+
+.ecp-list {
+  max-height: min(520px, calc(100vh - 160px));
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.ecp-section + .ecp-section {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid #333333;
+}
+
+.ecp-section-title {
+  padding: 7px 8px 5px;
+  color: #a7a7a7;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 14px;
+  text-transform: uppercase;
+}
+
+.ecp-item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 8px;
+  gap: 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ecp-item[data-selected="true"] {
+  background: #04395e;
+}
+
+.ecp-item:focus {
+  outline: 0;
+}
+
+.ecp-favicon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #3a3d41;
+  color: #c5c5c5;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ecp-favicon img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.ecp-item-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ecp-title,
+.ecp-url {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ecp-title {
+  color: #f1f1f1;
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.ecp-url {
+  color: #9cdcfe;
+  font-size: 12px;
+  line-height: 15px;
+}
+
+.ecp-active {
+  align-self: center;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #343a40;
+  color: #c5c5c5;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.ecp-empty {
+  padding: 28px 12px 32px;
+  color: #9d9d9d;
+  font-size: 14px;
+  text-align: center;
+}
+
+.ecp-empty-section {
+  padding: 10px 8px 12px;
+  font-size: 12px;
+  text-align: left;
+}
+
+@media (max-width: 560px) {
+  .ecp-panel {
+    width: calc(100vw - 20px);
+    margin-top: 36px;
+  }
+
+  .ecp-item {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .ecp-active {
+    grid-column: 2;
+    width: max-content;
+  }
+}

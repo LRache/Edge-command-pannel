@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Edge Command Panel",
+  "description": "Open a VS Code-like command panel to search recent tabs and bookmark bar items.",
+  "version": "0.1.0",
+  "permissions": ["tabs", "scripting", "bookmarks"],
+  "action": {
+    "default_title": "Open tab command panel"
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "commands": {
+    "toggle-command-panel": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+P",
+        "mac": "Command+Shift+P"
+      },
+      "description": "Open tab command panel"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["src/content.js"],
+      "css": ["src/panel.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
