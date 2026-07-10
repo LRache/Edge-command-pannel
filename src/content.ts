@@ -15,6 +15,8 @@ import {
   type Theme
 } from "./messages";
 
+const extensionApi = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser ?? chrome;
+
 declare global {
   var __edgeCommandPanelLoaded: boolean | undefined;
 }
@@ -226,7 +228,7 @@ interface RenderOptions {
 
   const searchTextCache = new WeakMap<PanelItem, Map<SearchableField, string>>();
 
-  chrome.runtime.onMessage.addListener((rawMessage: unknown, _sender, sendResponse) => {
+  extensionApi.runtime.onMessage.addListener((rawMessage: unknown, _sender, sendResponse) => {
     if (!isPanelRequest(rawMessage)) {
       return false;
     }
@@ -393,7 +395,7 @@ interface RenderOptions {
   }
 
   async function requestTransparentPanel(): Promise<boolean> {
-    const values = await chrome.storage.local.get(TRANSPARENT_PANEL_STORAGE_KEY);
+    const values = await extensionApi.storage.local.get(TRANSPARENT_PANEL_STORAGE_KEY);
     return values[TRANSPARENT_PANEL_STORAGE_KEY] === true;
   }
 
@@ -981,7 +983,7 @@ interface RenderOptions {
 
     if (command.action === "toggle-transparent-panel") {
       const transparentPanel = !state.transparentPanel;
-      await chrome.storage.local.set({ [TRANSPARENT_PANEL_STORAGE_KEY]: transparentPanel });
+      await extensionApi.storage.local.set({ [TRANSPARENT_PANEL_STORAGE_KEY]: transparentPanel });
       applyPanelTransparency(transparentPanel);
       setStatus(`Transparent panel ${transparentPanel ? "enabled" : "disabled"}.`);
       return { ok: true, keepOpen: true };
@@ -1225,6 +1227,6 @@ interface RenderOptions {
   async function sendMessage<T extends object = Record<string, never>>(
     request: PanelRequest
   ): Promise<MessageResponse<T>> {
-    return (await chrome.runtime.sendMessage(request)) as MessageResponse<T>;
+    return (await extensionApi.runtime.sendMessage(request)) as MessageResponse<T>;
   }
 })();

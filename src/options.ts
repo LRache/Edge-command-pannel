@@ -7,6 +7,8 @@ import {
   type AiSettings
 } from "./ai-settings";
 
+const extensionApi = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser ?? chrome;
+
 const form = getElement<HTMLFormElement>("ai-settings-form");
 const baseUrlInput = getElement<HTMLInputElement>("base-url");
 const modelInput = getElement<HTMLInputElement>("model");
@@ -21,7 +23,7 @@ form.addEventListener("submit", (event) => {
 });
 
 async function loadSettings(): Promise<void> {
-  const values = await chrome.storage.local.get(AI_SETTINGS_STORAGE_KEY);
+  const values = await extensionApi.storage.local.get(AI_SETTINGS_STORAGE_KEY);
   let settings: AiSettings;
   try {
     settings = normalizeAiSettings(values[AI_SETTINGS_STORAGE_KEY]);
@@ -52,13 +54,13 @@ async function saveSettings(): Promise<void> {
     }
 
     const originPattern = getOriginPattern(settings.baseUrl);
-    const granted = await chrome.permissions.request({ origins: [originPattern] });
+    const granted = await extensionApi.permissions.request({ origins: [originPattern] });
     if (!granted) {
       throw new Error(`Permission to connect to ${new URL(settings.baseUrl).origin} was not granted.`);
     }
 
     const previousSettings = await readStoredSettings();
-    await chrome.storage.local.set({ [AI_SETTINGS_STORAGE_KEY]: settings });
+    await extensionApi.storage.local.set({ [AI_SETTINGS_STORAGE_KEY]: settings });
     baseUrlInput.value = settings.baseUrl;
     const removedPreviousPermission = await removeUnusedOriginPermission(previousSettings, settings);
     if (removedPreviousPermission) {
@@ -77,7 +79,7 @@ async function saveSettings(): Promise<void> {
 }
 
 async function readStoredSettings(): Promise<AiSettings | null> {
-  const values = await chrome.storage.local.get(AI_SETTINGS_STORAGE_KEY);
+  const values = await extensionApi.storage.local.get(AI_SETTINGS_STORAGE_KEY);
   if (!Object.prototype.hasOwnProperty.call(values, AI_SETTINGS_STORAGE_KEY)) {
     return null;
   }
@@ -104,12 +106,12 @@ async function removeUnusedOriginPermission(
   }
 
   try {
-    const hasPreviousPermission = await chrome.permissions.contains({ origins: [previousOrigin] });
+    const hasPreviousPermission = await extensionApi.permissions.contains({ origins: [previousOrigin] });
     if (!hasPreviousPermission) {
       return true;
     }
 
-    return await chrome.permissions.remove({ origins: [previousOrigin] });
+    return await extensionApi.permissions.remove({ origins: [previousOrigin] });
   } catch {
     return false;
   }
