@@ -4,6 +4,7 @@ import { renderMarkdown } from "./markdown";
 import {
   getErrorMessage,
   isPanelRequest,
+  MAX_ASK_QUESTION_LENGTH,
   MESSAGE_TYPES,
   type MessageResponse,
   type PageContext,
@@ -1027,6 +1028,14 @@ interface RenderOptions {
       setStatus("Enter a question about the current page.");
       return;
     }
+    if (question.length > MAX_ASK_QUESTION_LENGTH) {
+      renderAskMessage(
+        `Questions can contain at most ${MAX_ASK_QUESTION_LENGTH.toLocaleString()} characters.`,
+        "error"
+      );
+      setStatus("Question is too long");
+      return;
+    }
     const page = state.pageContext ?? extractPageContext(document);
     if (!page.text) {
       renderAskMessage("No readable visible text was found on this page.", "error");
@@ -1124,6 +1133,11 @@ interface RenderOptions {
       ? "Ask a question about the current page"
       : "Search recent tabs, bookmark bar, and commands";
     input.setAttribute("aria-label", input.placeholder);
+    if (isAskMode) {
+      input.maxLength = MAX_ASK_QUESTION_LENGTH;
+    } else {
+      input.removeAttribute("maxlength");
+    }
     input.disabled = state.asking;
   }
 

@@ -17,6 +17,8 @@ export const MESSAGE_TYPES = {
   OPEN_BOOKMARK: "OPEN_BOOKMARK"
 } as const;
 
+export const MAX_ASK_QUESTION_LENGTH = 2_000;
+
 export type Theme = "light" | "dark";
 
 export interface PanelTab {
@@ -94,7 +96,11 @@ export function isPanelRequest(value: unknown): value is PanelRequest {
 }
 
 function isValidAskPageRequest(value: Record<string, unknown>): boolean {
-  if (typeof value.question !== "string" || !value.question.trim() || value.question.length > 2_000) {
+  if (
+    typeof value.question !== "string" ||
+    !value.question.trim() ||
+    value.question.length > MAX_ASK_QUESTION_LENGTH
+  ) {
     return false;
   }
   if (!isRecord(value.page)) {

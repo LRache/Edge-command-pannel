@@ -80,6 +80,7 @@ async function openCommandPanel(tab?: chrome.tabs.Tab): Promise<void> {
 
 chrome.runtime.onMessage.addListener((rawMessage: unknown, sender, sendResponse) => {
   if (!isPanelRequest(rawMessage)) {
+    sendResponse({ ok: false, error: "Invalid extension request." });
     return false;
   }
 
