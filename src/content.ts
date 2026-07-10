@@ -24,6 +24,7 @@ const ITEM_TYPES = {
 type ItemType = (typeof ITEM_TYPES)[keyof typeof ITEM_TYPES];
 type CommandAction =
   | "show-built-in-commands"
+  | "toggle-transparent-panel"
   | "new-tab"
   | "close-current-tab"
   | "copy-current-tab"
@@ -70,6 +71,7 @@ interface PanelState {
   visibleItems: PanelItem[];
   selectedIndex: number;
   theme: Theme;
+  transparentPanel: boolean;
   updateStatus: RepositoryUpdateStatus | null;
   previousFocus: HTMLElement | null;
   ignoreMouseSelectionUntil: number;
@@ -92,6 +94,7 @@ interface RenderOptions {
   globalThis.__edgeCommandPanelLoaded = true;
 
   const RECENT_TAB_DISPLAY_LIMIT = 8;
+  const TRANSPARENT_PANEL_STORAGE_KEY = "commandPanelTransparentPanel";
   const pinyinSearch = { buildSearchText, normalizeSearchTerms };
   const BUILT_IN_COMMANDS: CommandItem[] = [
     {
@@ -102,6 +105,15 @@ interface RenderOptions {
       iconText: "?",
       action: "show-built-in-commands",
       aliases: "help commands builtin built-in command list show commands 帮助 命令 内置命令 查看命令 bangzhu mingling neizhimingling chakana mingling"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "panel-toggle-transparent",
+      title: "Panel: Toggle Transparent",
+      subtitle: "Make the command panel translucent or solid",
+      iconText: "A",
+      action: "toggle-transparent-panel",
+      aliases: "panel transparent translucent opacity acrylic glass blur solid toggle 透明 半透明 毛玻璃 面板 关闭透明 touming bantouming maoboli mianban"
     },
     {
       type: ITEM_TYPES.COMMAND,
@@ -171,6 +183,7 @@ interface RenderOptions {
     visibleItems: [],
     selectedIndex: 0,
     theme: "dark",
+    transparentPanel: false,
     updateStatus: null,
     previousFocus: null,
     ignoreMouseSelectionUntil: 0
@@ -216,12 +229,14 @@ interface RenderOptions {
     elements.list.textContent = "";
 
     try {
-      const [theme, tabs, bookmarks] = await Promise.all([
+      const [theme, transparentPanel, tabs, bookmarks] = await Promise.all([
         requestTheme(),
+        requestTransparentPanel(),
         requestTabs(),
         requestBookmarks()
       ]);
       applyTheme(theme);
+      applyPanelTransparency(transparentPanel);
       state.sections[ITEM_TYPES.TAB] = tabs;
       state.sections[ITEM_TYPES.BOOKMARK] = bookmarks;
       applyFilter("");
@@ -329,6 +344,11 @@ interface RenderOptions {
     }
 
     return response.theme || "dark";
+  }
+
+  async function requestTransparentPanel(): Promise<boolean> {
+    const values = await chrome.storage.local.get(TRANSPARENT_PANEL_STORAGE_KEY);
+    return values[TRANSPARENT_PANEL_STORAGE_KEY] === true;
   }
 
   async function refreshUpdateStatus(): Promise<void> {
@@ -861,6 +881,14 @@ interface RenderOptions {
       return { ok: true, keepOpen: true };
     }
 
+    if (command.action === "toggle-transparent-panel") {
+      const transparentPanel = !state.transparentPanel;
+      await chrome.storage.local.set({ [TRANSPARENT_PANEL_STORAGE_KEY]: transparentPanel });
+      applyPanelTransparency(transparentPanel);
+      setStatus(`Transparent panel ${transparentPanel ? "enabled" : "disabled"}.`);
+      return { ok: true, keepOpen: true };
+    }
+
     if (!command.theme) {
       return { ok: false, error: "Invalid command." };
     }
@@ -883,6 +911,13 @@ interface RenderOptions {
     state.theme = theme === "light" ? "light" : "dark";
     if (state.root) {
       state.root.dataset.theme = state.theme;
+    }
+  }
+
+  function applyPanelTransparency(enabled: boolean): void {
+    state.transparentPanel = enabled;
+    if (state.root) {
+      state.root.dataset.panelTransparency = enabled ? "translucent" : "solid";
     }
   }
 
