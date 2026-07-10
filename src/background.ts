@@ -5,7 +5,7 @@ import {
   type PageContext,
   type PanelBookmark,
   type PanelTab,
-  type RepositoryUpdateStatus,
+  type ReleaseUpdateStatus,
   type Theme
 } from "./messages";
 import { AI_SETTINGS_STORAGE_KEY, normalizeAiSettings } from "./ai-settings";
@@ -15,17 +15,21 @@ import UPDATE_TRACKED_FILES from "../config/update-tracked-files.json";
 const DEFAULT_THEME: Theme = "dark";
 const THEME_STORAGE_KEY = "commandPanelTheme";
 const THEMES = new Set<Theme>(["light", "dark"]);
-const UPDATE_STATUS_STORAGE_KEY = "repositoryUpdateStatus";
-const UPDATE_ALARM_NAME = "checkRepositoryUpdate";
+const UPDATE_STATUS_STORAGE_KEY = "releaseUpdateStatus";
+const UPDATE_ALARM_NAME = "checkReleaseUpdate";
 const UPDATE_CHECK_INTERVAL_MINUTES = 360;
 const UPDATE_CHECK_INTERVAL_MS = UPDATE_CHECK_INTERVAL_MINUTES * 60 * 1000;
 const REPOSITORY_API_URL = "https://api.github.com/repos/LRache/Edge-command-pannel";
-const REPOSITORY_BRANCH = "main";
+interface GitHubReleaseResponse {
+  draft?: boolean;
+  html_url?: string;
+  name?: string;
+  tag_name?: string;
+}
+
 interface GitHubCommitResponse {
   sha?: string;
-  html_url?: string;
   commit?: {
-    message?: string;
     tree?: { sha?: string };
   };
 }
@@ -35,7 +39,7 @@ interface GitHubTreeResponse {
   tree?: Array<{ path?: string; sha?: string; type?: string }>;
 }
 
-let updateCheckPromise: Promise<RepositoryUpdateStatus> | null = null;
+let updateCheckPromise: Promise<ReleaseUpdateStatus> | null = null;
 let localBlobShasPromise: Promise<Map<string, string>> | null = null;
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
@@ -50,17 +54,17 @@ chrome.action.onClicked.addListener(openCommandPanel);
 
 chrome.runtime.onInstalled.addListener(() => {
   scheduleUpdateChecks();
-  void getRepositoryUpdateStatus({ force: true });
+  void getReleaseUpdateStatus({ force: true });
 });
 
 chrome.runtime.onStartup.addListener(() => {
   scheduleUpdateChecks();
-  void getRepositoryUpdateStatus();
+  void getReleaseUpdateStatus();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === UPDATE_ALARM_NAME) {
-    void getRepositoryUpdateStatus({ force: true });
+    void getReleaseUpdateStatus({ force: true });
   }
 });
 
@@ -102,7 +106,7 @@ async function handleMessage(
     case MESSAGE_TYPES.GET_THEME:
       return { ok: true, theme: await getTheme() };
     case MESSAGE_TYPES.GET_UPDATE_STATUS:
-      return { ok: true, status: await getRepositoryUpdateStatus() };
+      return { ok: true, status: await getReleaseUpdateStatus() };
     case MESSAGE_TYPES.SET_THEME:
       return { ok: true, theme: await setTheme(message.theme) };
     case MESSAGE_TYPES.ASK_PAGE:
@@ -304,12 +308,12 @@ function scheduleUpdateChecks(): void {
   });
 }
 
-async function getRepositoryUpdateStatus(
+async function getReleaseUpdateStatus(
   { force = false }: { force?: boolean } = {}
-): Promise<RepositoryUpdateStatus> {
+): Promise<ReleaseUpdateStatus> {
   const values = await chrome.storage.local.get(UPDATE_STATUS_STORAGE_KEY);
   const storedStatus: unknown = values[UPDATE_STATUS_STORAGE_KEY];
-  const cachedStatus = isRepositoryUpdateStatus(storedStatus) ? storedStatus : undefined;
+  const cachedStatus = isReleaseUpdateStatus(storedStatus) ? storedStatus : undefined;
   const localFingerprint = await getLocalFingerprint();
   const cacheMatchesLocalFiles = cachedStatus?.localFingerprint === localFingerprint;
   const isFresh =
@@ -326,14 +330,14 @@ async function getRepositoryUpdateStatus(
     return updateCheckPromise;
   }
 
-  updateCheckPromise = checkLatestRepositoryCommit()
+  updateCheckPromise = checkLatestRelease()
     .then(async (status) => {
       await chrome.storage.local.set({ [UPDATE_STATUS_STORAGE_KEY]: status });
       await updateActionBadge(status);
       return status;
     })
     .catch(async (error) => {
-      console.warn("Unable to check repository updates.", error);
+      console.warn("Unable to check release updates.", error);
       if (cachedStatus && cacheMatchesLocalFiles) {
         await updateActionBadge(cachedStatus);
         return cachedStatus;
@@ -349,9 +353,23 @@ async function getRepositoryUpdateStatus(
   return updateCheckPromise;
 }
 
-async function checkLatestRepositoryCommit(): Promise<RepositoryUpdateStatus> {
+async function checkLatestRelease(): Promise<ReleaseUpdateStatus> {
+  // The /releases/latest endpoint excludes pre-releases, which this repository uses for builds.
+  const releases = await fetchGitHubJson<GitHubReleaseResponse[]>(
+    `${REPOSITORY_API_URL}/releases?per_page=20`
+  );
+  if (!Array.isArray(releases)) {
+    throw new Error("Invalid repository release response.");
+  }
+
+  const release = releases.find((candidate) => !candidate.draft && candidate.tag_name);
+  if (!release?.tag_name) {
+    throw new Error("No published repository release is available.");
+  }
+
+  const encodedTag = encodeURIComponent(release.tag_name);
   const commit = await fetchGitHubJson<GitHubCommitResponse>(
-    `${REPOSITORY_API_URL}/commits/${REPOSITORY_BRANCH}`
+    `${REPOSITORY_API_URL}/commits/${encodedTag}`
   );
   const treeSha = commit.commit?.tree?.sha;
   if (!commit.sha || !treeSha) {
@@ -373,20 +391,20 @@ async function checkLatestRepositoryCommit(): Promise<RepositoryUpdateStatus> {
   }
   const localBlobShas = await getLocalBlobShas();
   const localFingerprint = getBlobFingerprint(localBlobShas);
-  const matchesLatestCommit =
+  const matchesLatestRelease =
     UPDATE_TRACKED_FILES.every((path) => {
       return remoteBlobShas.get(path) === localBlobShas.get(path);
     });
 
   return {
-    available: !matchesLatestCommit,
+    available: !matchesLatestRelease,
     checkedAt: Date.now(),
     localFingerprint,
-    latestCommit: commit.sha,
-    latestCommitUrl:
-      commit.html_url ||
-      `${REPOSITORY_API_URL.replace("api.github.com/repos", "github.com")}/commit/${commit.sha}`,
-    latestMessage: String(commit.commit?.message || "Repository update").split("\n")[0] ?? "Repository update"
+    latestReleaseTag: release.tag_name,
+    latestReleaseUrl:
+      release.html_url ||
+      `${REPOSITORY_API_URL.replace("api.github.com/repos", "github.com")}/releases/tag/${encodedTag}`,
+    latestMessage: release.name || release.tag_name
   };
 }
 
@@ -441,7 +459,7 @@ async function getLocalGitBlobSha(path: string): Promise<string> {
   return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function updateActionBadge(status: RepositoryUpdateStatus): Promise<void> {
+async function updateActionBadge(status: ReleaseUpdateStatus): Promise<void> {
   await chrome.action.setBadgeText({ text: status.available ? "UP" : "" });
   if (status.available) {
     await chrome.action.setBadgeBackgroundColor({ color: "#b45309" });
@@ -529,7 +547,7 @@ function isInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value);
 }
 
-function isRepositoryUpdateStatus(value: unknown): value is RepositoryUpdateStatus {
+function isReleaseUpdateStatus(value: unknown): value is ReleaseUpdateStatus {
   if (typeof value !== "object" || value === null) {
     return false;
   }

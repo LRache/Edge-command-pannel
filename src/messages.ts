@@ -37,12 +37,12 @@ export interface PanelBookmark {
   path: string;
 }
 
-export interface RepositoryUpdateStatus {
+export interface ReleaseUpdateStatus {
   available: boolean;
   checkedAt: number;
   localFingerprint?: string;
-  latestCommit?: string;
-  latestCommitUrl?: string;
+  latestReleaseTag?: string;
+  latestReleaseUrl?: string;
   latestMessage?: string;
 }
 

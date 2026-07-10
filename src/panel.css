@@ -14,6 +14,7 @@
   --ecp-text: #d4d4d4;
   --ecp-text-strong: #f1f1f1;
   --ecp-muted: #9d9d9d;
+  --ecp-warning: #facc15;
   --ecp-placeholder: #858585;
   --ecp-link: #9cdcfe;
   --ecp-selected: #04395e;
@@ -37,6 +38,7 @@
   --ecp-text: #24272e;
   --ecp-text-strong: #121417;
   --ecp-muted: #69717f;
+  --ecp-warning: #a16207;
   --ecp-placeholder: #8a93a3;
   --ecp-link: #075fb8;
   --ecp-selected: #e8f2ff;
@@ -132,6 +134,10 @@
   font-weight: 600;
   line-height: 14px;
   text-transform: uppercase;
+}
+
+.ecp-section-update > .ecp-section-title {
+  color: var(--ecp-warning);
 }
 
 .ecp-item {

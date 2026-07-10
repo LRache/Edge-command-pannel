@@ -11,7 +11,7 @@ import {
   type PanelBookmark,
   type PanelRequest,
   type PanelTab,
-  type RepositoryUpdateStatus,
+  type ReleaseUpdateStatus,
   type Theme
 } from "./messages";
 
@@ -79,7 +79,7 @@ interface PanelState {
   visibleItems: PanelItem[];
   selectedIndex: number;
   theme: Theme;
-  updateStatus: RepositoryUpdateStatus | null;
+  updateStatus: ReleaseUpdateStatus | null;
   previousFocus: HTMLElement | null;
   ignoreMouseSelectionUntil: number;
   mode: PanelMode;
@@ -379,7 +379,7 @@ interface RenderOptions {
 
   async function refreshUpdateStatus(): Promise<void> {
     try {
-      const response = await sendMessage<{ status: RepositoryUpdateStatus }>({
+      const response = await sendMessage<{ status: ReleaseUpdateStatus }>({
         type: MESSAGE_TYPES.GET_UPDATE_STATUS
       });
       if (!response?.ok) {
@@ -640,20 +640,20 @@ interface RenderOptions {
 
   function createUpdateCommands(): CommandItem[] {
     const updateStatus = state.updateStatus;
-    if (!updateStatus?.available || !updateStatus.latestCommitUrl) {
+    if (!updateStatus?.available || !updateStatus.latestReleaseUrl) {
       return [];
     }
 
-    const shortCommit = String(updateStatus.latestCommit || "").slice(0, 7);
+    const releaseTag = String(updateStatus.latestReleaseTag || "");
     return [
       {
         type: ITEM_TYPES.COMMAND,
-        id: "open-repository-update",
-        title: `Update available${shortCommit ? ` (${shortCommit})` : ""}`,
-        subtitle: updateStatus.latestMessage || "Open the latest repository commit",
+        id: "open-release-update",
+        title: `Update available${releaseTag ? ` (${releaseTag})` : ""}`,
+        subtitle: updateStatus.latestMessage || "Open the latest release",
         iconText: "U",
         action: "open-update-page",
-        url: updateStatus.latestCommitUrl
+        url: updateStatus.latestReleaseUrl
       }
     ];
   }
@@ -683,7 +683,7 @@ interface RenderOptions {
       appendSection(fragment, "Go to URL", urlCommands, "");
     }
     if (updateCommands.length > 0) {
-      appendSection(fragment, "Update Available", updateCommands, "");
+      appendSection(fragment, "Update Available", updateCommands, "", "update");
     }
     list.append(fragment);
     syncSelectedItem();
@@ -700,10 +700,14 @@ interface RenderOptions {
     fragment: DocumentFragment,
     title: string,
     items: PanelItem[],
-    emptyText: string
+    emptyText: string,
+    variant: "default" | "update" = "default"
   ): void {
     const section = document.createElement("section");
     section.className = "ecp-section";
+    if (variant === "update") {
+      section.classList.add("ecp-section-update");
+    }
 
     const heading = document.createElement("div");
     heading.className = "ecp-section-title";
@@ -943,7 +947,7 @@ interface RenderOptions {
     }
 
     if (command.action === "open-update-page" && command.url) {
-      setStatus("Opening the latest repository commit...");
+      setStatus("Opening the latest release...");
       return sendMessage({
         type: MESSAGE_TYPES.OPEN_BOOKMARK,
         url: command.url
