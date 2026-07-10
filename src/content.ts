@@ -1,9 +1,13 @@
 import { buildSearchText, normalizeSearchTerms } from "./pinyin";
+import { extractPageContext } from "./page-context";
+import { renderMarkdown } from "./markdown";
 import {
   getErrorMessage,
   isPanelRequest,
+  MAX_ASK_QUESTION_LENGTH,
   MESSAGE_TYPES,
   type MessageResponse,
+  type PageContext,
   type PanelBookmark,
   type PanelRequest,
   type PanelTab,
@@ -29,7 +33,11 @@ type CommandAction =
   | "copy-current-tab"
   | "reload-current-tab"
   | "navigate-current-tab"
-  | "open-update-page";
+  | "open-update-page"
+  | "ask-current-page"
+  | "open-ai-settings";
+
+type PanelMode = "search" | "ask";
 
 interface TabItem extends PanelTab {
   type: typeof ITEM_TYPES.TAB;
@@ -49,6 +57,7 @@ interface CommandItem {
   action?: CommandAction;
   theme?: Theme;
   url?: string;
+  question?: string;
 }
 
 type PanelItem = TabItem | BookmarkItem | CommandItem;
@@ -73,6 +82,10 @@ interface PanelState {
   updateStatus: RepositoryUpdateStatus | null;
   previousFocus: HTMLElement | null;
   ignoreMouseSelectionUntil: number;
+  mode: PanelMode;
+  asking: boolean;
+  askRequestId: number;
+  pageContext: PageContext | null;
 }
 
 interface RenderOptions {
@@ -102,6 +115,24 @@ interface RenderOptions {
       iconText: "?",
       action: "show-built-in-commands",
       aliases: "help commands builtin built-in command list show commands 帮助 命令 内置命令 查看命令 bangzhu mingling neizhimingling chakana mingling"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "ask-current-page",
+      title: "AI: Ask About This Page",
+      subtitle: "Ask a question using the visible text on the current page",
+      iconText: "AI",
+      action: "ask-current-page",
+      aliases: "ask ai page question current page summarize 询问 页面 问当前页面 总结页面 xunwen yemian zongjie"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "configure-ai",
+      title: "AI: Configure Provider",
+      subtitle: "Set the OpenAI-compatible endpoint, model, and API key",
+      iconText: "S",
+      action: "open-ai-settings",
+      aliases: "ai settings configure provider api key model 设置 AI 配置 模型 密钥 shezhi peizhi moxing miyao"
     },
     {
       type: ITEM_TYPES.COMMAND,
@@ -173,7 +204,11 @@ interface RenderOptions {
     theme: "dark",
     updateStatus: null,
     previousFocus: null,
-    ignoreMouseSelectionUntil: 0
+    ignoreMouseSelectionUntil: 0,
+    mode: "search",
+    asking: false,
+    askRequestId: 0,
+    pageContext: null
   };
 
   const searchTextCache = new WeakMap<PanelItem, Map<SearchableField, string>>();
@@ -209,7 +244,12 @@ interface RenderOptions {
     const elements = ensurePanel();
     document.documentElement.append(elements.root);
     elements.root.hidden = false;
+    state.mode = "search";
+    state.asking = false;
+    state.pageContext = null;
+    state.askRequestId += 1;
     elements.input.value = "";
+    configureInputForMode();
     state.selectedIndex = 0;
     elements.input.focus();
     setStatus("Loading recent tabs and bookmark bar...");
@@ -240,6 +280,8 @@ interface RenderOptions {
       return;
     }
 
+    state.askRequestId += 1;
+    state.asking = false;
     state.root.remove();
     if (state.previousFocus?.isConnected) {
       state.previousFocus.focus();
@@ -281,7 +323,11 @@ interface RenderOptions {
     input.autocomplete = "off";
     input.spellcheck = false;
     input.setAttribute("aria-label", "Search recent tabs, bookmark bar, and commands");
-    input.addEventListener("input", () => applyFilter(input.value));
+    input.addEventListener("input", () => {
+      if (state.mode === "search") {
+        applyFilter(input.value);
+      }
+    });
     input.addEventListener("keydown", handleKeyDown);
 
     state.status = document.createElement("div");
@@ -341,7 +387,7 @@ interface RenderOptions {
       }
 
       state.updateStatus = response.status || null;
-      if (state.root?.isConnected) {
+      if (state.root?.isConnected && state.mode === "search") {
         applyFilter(state.input?.value ?? "");
       }
     } catch {
@@ -350,6 +396,17 @@ interface RenderOptions {
   }
 
   function applyFilter(query: string): void {
+    const askCommand = createAskCommand(query);
+    if (askCommand) {
+      state.selectedIndex = 0;
+      state.visibleItems = [askCommand];
+      renderResults({
+        commands: [askCommand],
+        includeEmptySections: false
+      });
+      return;
+    }
+
     const queryTerms = pinyinSearch.normalizeSearchTerms(query);
     const bookmarks = filterBookmarks(queryTerms);
     const tabs = filterTabs(queryTerms, bookmarks);
@@ -364,6 +421,26 @@ interface RenderOptions {
     }
 
     renderResults({ tabs, bookmarks, commands, urlCommands, updateCommands });
+  }
+
+  function createAskCommand(query: string): CommandItem | null {
+    const match = query.trim().match(/^(?:ask|问|询问)(?:\s+(.+))?$/i);
+    if (!match) {
+      return null;
+    }
+
+    const question = match[1]?.trim();
+    return {
+      type: ITEM_TYPES.COMMAND,
+      id: "ask-input-question",
+      title: question ? `Ask AI: ${question}` : "AI: Ask About This Page",
+      subtitle: question
+        ? "Send this question with the current page's visible text"
+        : "Enter Ask mode for the current page",
+      iconText: "AI",
+      action: "ask-current-page",
+      ...(question ? { question } : {})
+    };
   }
 
   function filterTabs(queryTerms: string[], matchedBookmarks: BookmarkItem[]): TabItem[] {
@@ -730,6 +807,23 @@ interface RenderOptions {
   }
 
   function handleKeyDown(event: KeyboardEvent): void {
+    if (state.mode === "ask") {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (state.asking) {
+          closePanel();
+        } else {
+          exitAskMode();
+        }
+        return;
+      }
+      if (event.key === "Enter" && !state.asking) {
+        event.preventDefault();
+        void submitAskQuestion(ensurePanel().input.value);
+      }
+      return;
+    }
+
     if (event.key === "Escape") {
       event.preventDefault();
       closePanel();
@@ -861,6 +955,20 @@ interface RenderOptions {
       return { ok: true, keepOpen: true };
     }
 
+    if (command.action === "ask-current-page") {
+      enterAskMode();
+      if (command.question) {
+        ensurePanel().input.value = command.question;
+        void submitAskQuestion(command.question);
+      }
+      return { ok: true, keepOpen: true };
+    }
+
+    if (command.action === "open-ai-settings") {
+      const response = await sendMessage({ type: MESSAGE_TYPES.OPEN_AI_SETTINGS });
+      return response.ok ? { ok: true, keepOpen: true } : response;
+    }
+
     if (!command.theme) {
       return { ok: false, error: "Invalid command." };
     }
@@ -877,6 +985,160 @@ interface RenderOptions {
     }
 
     return response;
+  }
+
+  function enterAskMode(): void {
+    state.mode = "ask";
+    state.asking = false;
+    state.pageContext = extractPageContext(document);
+    state.visibleItems = [];
+    state.selectedIndex = 0;
+
+    const elements = ensurePanel();
+    elements.input.value = "";
+    configureInputForMode();
+    renderAskMessage(
+      "Ask a question about this page. Its visible text will only be sent to your configured AI service after you press Enter.",
+      "intro"
+    );
+    setStatus(
+      state.pageContext.text
+        ? `Ready · ${state.pageContext.text.length.toLocaleString()} page characters${state.pageContext.truncated ? " (excerpt)" : ""}`
+        : "No readable page text found"
+    );
+    elements.input.focus();
+  }
+
+  function exitAskMode(): void {
+    state.askRequestId += 1;
+    state.mode = "search";
+    state.asking = false;
+    state.pageContext = null;
+    const input = ensurePanel().input;
+    input.value = "";
+    configureInputForMode();
+    state.selectedIndex = 0;
+    applyFilter("");
+    input.focus();
+  }
+
+  async function submitAskQuestion(rawQuestion: string): Promise<void> {
+    const question = rawQuestion.trim();
+    if (!question) {
+      setStatus("Enter a question about the current page.");
+      return;
+    }
+    if (question.length > MAX_ASK_QUESTION_LENGTH) {
+      renderAskMessage(
+        `Questions can contain at most ${MAX_ASK_QUESTION_LENGTH.toLocaleString()} characters.`,
+        "error"
+      );
+      setStatus("Question is too long");
+      return;
+    }
+    const page = state.pageContext ?? extractPageContext(document);
+    if (!page.text) {
+      renderAskMessage("No readable visible text was found on this page.", "error");
+      setStatus("Unable to ask without page text");
+      return;
+    }
+
+    const requestId = ++state.askRequestId;
+    state.asking = true;
+    const input = ensurePanel().input;
+    input.disabled = true;
+    renderAskMessage("Asking AI…", "loading");
+    setStatus(`Sending ${page.text.length.toLocaleString()} page characters to the configured AI service…`);
+
+    try {
+      const response = await sendMessage<{ answer: string }>({
+        type: MESSAGE_TYPES.ASK_PAGE,
+        question,
+        page
+      });
+      if (requestId !== state.askRequestId || state.mode !== "ask") {
+        return;
+      }
+      if (!response.ok) {
+        renderAskError(response.error);
+        setStatus("Ask failed");
+        return;
+      }
+
+      renderAskMessage(response.answer, "answer");
+      input.value = "";
+      setStatus("Answer ready · Ask another question, or press Escape to return");
+    } catch (error) {
+      if (requestId !== state.askRequestId || state.mode !== "ask") {
+        return;
+      }
+      renderAskError(getErrorMessage(error, "Unable to ask AI."));
+      setStatus("Ask failed");
+    } finally {
+      if (requestId === state.askRequestId && state.mode === "ask") {
+        state.asking = false;
+        input.disabled = false;
+        input.focus();
+      }
+    }
+  }
+
+  function renderAskError(message: string): void {
+    renderAskMessage(message, "error", {
+      actionLabel: "Open AI Settings",
+      onAction: () => {
+        void sendMessage({ type: MESSAGE_TYPES.OPEN_AI_SETTINGS });
+      }
+    });
+  }
+
+  function renderAskMessage(
+    message: string,
+    kind: "intro" | "loading" | "answer" | "error",
+    action?: { actionLabel: string; onAction: () => void }
+  ): void {
+    const list = ensurePanel().list;
+    list.textContent = "";
+
+    const container = document.createElement("section");
+    container.className = `ecp-ask ecp-ask-${kind}`;
+    const heading = document.createElement("div");
+    heading.className = "ecp-section-title";
+    heading.textContent = kind === "answer" ? "AI Answer" : kind === "error" ? "Ask Error" : "Ask AI";
+    const body = document.createElement("div");
+    body.className = "ecp-ask-content";
+    if (kind === "answer") {
+      renderMarkdown(body, message);
+    } else {
+      body.textContent = message;
+    }
+    container.append(heading, body);
+
+    if (action) {
+      const button = document.createElement("button");
+      button.className = "ecp-ask-action";
+      button.type = "button";
+      button.textContent = action.actionLabel;
+      button.addEventListener("click", action.onAction);
+      container.append(button);
+    }
+
+    list.append(container);
+  }
+
+  function configureInputForMode(): void {
+    const input = ensurePanel().input;
+    const isAskMode = state.mode === "ask";
+    input.placeholder = isAskMode
+      ? "Ask a question about the current page"
+      : "Search recent tabs, bookmark bar, and commands";
+    input.setAttribute("aria-label", input.placeholder);
+    if (isAskMode) {
+      input.maxLength = MAX_ASK_QUESTION_LENGTH;
+    } else {
+      input.removeAttribute("maxlength");
+    }
+    input.disabled = state.asking;
   }
 
   function applyTheme(theme: Theme): void {

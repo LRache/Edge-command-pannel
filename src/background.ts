@@ -2,11 +2,14 @@ import {
   getErrorMessage,
   isPanelRequest,
   MESSAGE_TYPES,
+  type PageContext,
   type PanelBookmark,
   type PanelTab,
   type RepositoryUpdateStatus,
   type Theme
 } from "./messages";
+import { AI_SETTINGS_STORAGE_KEY, normalizeAiSettings } from "./ai-settings";
+import { requestPageAnswer } from "./ai-client";
 import UPDATE_TRACKED_FILES from "../config/update-tracked-files.json";
 
 const DEFAULT_THEME: Theme = "dark";
@@ -77,6 +80,7 @@ async function openCommandPanel(tab?: chrome.tabs.Tab): Promise<void> {
 
 chrome.runtime.onMessage.addListener((rawMessage: unknown, sender, sendResponse) => {
   if (!isPanelRequest(rawMessage)) {
+    sendResponse({ ok: false, error: "Invalid extension request." });
     return false;
   }
 
@@ -101,6 +105,11 @@ async function handleMessage(
       return { ok: true, status: await getRepositoryUpdateStatus() };
     case MESSAGE_TYPES.SET_THEME:
       return { ok: true, theme: await setTheme(message.theme) };
+    case MESSAGE_TYPES.ASK_PAGE:
+      return { ok: true, answer: await askAboutPage(message.question, message.page) };
+    case MESSAGE_TYPES.OPEN_AI_SETTINGS:
+      await chrome.runtime.openOptionsPage();
+      break;
     case MESSAGE_TYPES.NEW_TAB:
       await openNewTab(sender.tab?.windowId);
       break;
@@ -127,6 +136,16 @@ async function handleMessage(
   }
 
   return { ok: true };
+}
+
+async function askAboutPage(question: string, page: PageContext): Promise<string> {
+  const values = await chrome.storage.local.get(AI_SETTINGS_STORAGE_KEY);
+  const settings = normalizeAiSettings(values[AI_SETTINGS_STORAGE_KEY]);
+  if (!settings.apiKey) {
+    throw new Error("AI is not configured. Open AI Settings and add an API key.");
+  }
+
+  return requestPageAnswer(settings, question, page);
 }
 
 async function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {

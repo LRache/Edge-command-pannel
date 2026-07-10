@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Edge Command Panel · AI Settings</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Edge Command Panel</p>
+        <h1>AI Settings</h1>
+        <p class="description">
+          Configure an OpenAI-compatible service for the <code>ask</code> command.
+        </p>
+      </header>
+
+      <form id="ai-settings-form">
+        <label for="base-url">API base URL</label>
+        <input id="base-url" name="base-url" type="url" required spellcheck="false">
+        <p class="hint">HTTPS is required, except for localhost development servers.</p>
+
+        <label for="model">Model</label>
+        <input id="model" name="model" type="text" required spellcheck="false">
+
+        <label for="api-key">API key</label>
+        <input id="api-key" name="api-key" type="password" required autocomplete="off" spellcheck="false">
+        <p class="hint">
+          The key is stored in this browser profile. Page text is sent only when you submit an
+          <code>ask</code> question.
+        </p>
+
+        <div class="actions">
+          <button id="save" type="submit">Save settings</button>
+          <div id="status" role="status" aria-live="polite"></div>
+        </div>
+      </form>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>
