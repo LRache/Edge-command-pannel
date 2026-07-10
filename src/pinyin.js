@@ -45,8 +45,13 @@
       .toLocaleLowerCase();
   }
 
+  function normalizeSearchTerms(value) {
+    return [...new Set(normalizeSearchTerm(value).split(/\s+/).filter(Boolean))];
+  }
+
   globalThis.EdgeCommandPanelPinyin = {
     buildSearchText,
-    normalizeSearchTerm
+    normalizeSearchTerm,
+    normalizeSearchTerms
   };
 })();

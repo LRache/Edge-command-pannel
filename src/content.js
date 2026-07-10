@@ -13,6 +13,7 @@
     GET_THEME: "GET_THEME",
     SET_THEME: "SET_THEME",
     NEW_TAB: "NEW_TAB",
+    COPY_CURRENT_TAB: "COPY_CURRENT_TAB",
     CLOSE_CURRENT_TAB: "CLOSE_CURRENT_TAB",
     RELOAD_CURRENT_TAB: "RELOAD_CURRENT_TAB",
     ACTIVATE_TAB: "ACTIVATE_TAB",
@@ -72,6 +73,15 @@
       iconText: "X",
       action: "close-current-tab",
       aliases: "tab close close tab close current tab 关闭标签页 关闭当前标签页 删除标签页 guanbi biaoqianye gbbqy guanbidangqianbiaoqianye"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "tab-copy-current",
+      title: "Tab: Copy Current Tab",
+      subtitle: "Duplicate the current tab and switch to the copy",
+      iconText: "C",
+      action: "copy-current-tab",
+      aliases: "copy duplicate clone tab copy tab duplicate tab copy current tab 复制标签页 复制当前标签页 克隆标签页 fuzhi biaoqianye fuzhidangqianbiaoqianye kelong biaoqianye"
     },
     {
       type: ITEM_TYPES.COMMAND,
@@ -237,10 +247,10 @@
   }
 
   function applyFilter(query) {
-    const normalizedQuery = pinyinSearch.normalizeSearchTerm(query);
-    const tabs = filterTabs(normalizedQuery);
-    const bookmarks = filterBookmarks(normalizedQuery);
-    const commands = filterCommands(normalizedQuery);
+    const queryTerms = pinyinSearch.normalizeSearchTerms(query);
+    const tabs = filterTabs(queryTerms);
+    const bookmarks = filterBookmarks(queryTerms);
+    const commands = filterCommands(queryTerms);
 
     state.visibleItems = [...tabs, ...bookmarks, ...commands];
     if (state.selectedIndex >= state.visibleItems.length) {
@@ -250,89 +260,78 @@
     renderResults({ tabs, bookmarks, commands });
   }
 
-  function filterItems(items, normalizedQuery) {
-    if (!normalizedQuery) {
-      return [...items];
+  function filterTabs(queryTerms) {
+    const tabs = state.sections[ITEM_TYPES.TAB];
+    if (queryTerms.length === 0) {
+      return tabs.slice(0, RECENT_TAB_DISPLAY_LIMIT);
     }
 
-    return items.filter((item) => {
-      return getSearchText(item).includes(normalizedQuery);
-    });
+    return rankItems(tabs, queryTerms, [
+      ["title", 300],
+      ["url", 200]
+    ]);
   }
 
-  function getSearchText(item) {
-    if (!item.searchText) {
-      item.searchText = pinyinSearch.buildSearchText(
-        `${item.title || ""} ${item.subtitle || ""} ${item.url || ""} ${item.path || ""} ${item.aliases || ""}`
-      );
-    }
-
-    return item.searchText;
-  }
-
-  function filterTabs(normalizedQuery) {
-    const tabs = filterItems(state.sections[ITEM_TYPES.TAB], normalizedQuery);
-    return normalizedQuery ? tabs : tabs.slice(0, RECENT_TAB_DISPLAY_LIMIT);
-  }
-
-  function filterBookmarks(normalizedQuery) {
+  function filterBookmarks(queryTerms) {
     const bookmarks = state.sections[ITEM_TYPES.BOOKMARK];
-    if (!normalizedQuery) {
+    if (queryTerms.length === 0) {
       return [...bookmarks];
     }
 
-    return bookmarks
-      .map((bookmark, index) => ({
-        bookmark,
-        index,
-        score: scoreBookmark(bookmark, normalizedQuery)
-      }))
-      .filter((result) => result.score > 0)
-      .sort((a, b) => b.score - a.score || a.index - b.index)
-      .map((result) => result.bookmark);
+    return rankItems(bookmarks, queryTerms, [
+      ["title", 300],
+      ["url", 200],
+      ["path", 100]
+    ]);
   }
 
-  function scoreBookmark(bookmark, normalizedQuery) {
-    const titleScore = scoreText(getItemFieldSearchText(bookmark, "title"), normalizedQuery, 300);
-    if (titleScore > 0) {
-      return titleScore;
-    }
-
-    const urlScore = scoreText(getItemFieldSearchText(bookmark, "url"), normalizedQuery, 200);
-    if (urlScore > 0) {
-      return urlScore;
-    }
-
-    return scoreText(getItemFieldSearchText(bookmark, "path"), normalizedQuery, 100);
-  }
-
-  function filterCommands(normalizedQuery) {
-    if (!normalizedQuery) {
+  function filterCommands(queryTerms) {
+    if (queryTerms.length === 0) {
       return [];
     }
 
-    return BUILT_IN_COMMANDS.map((command, index) => ({
-      command,
-      index,
-      score: scoreCommand(command, normalizedQuery)
-    }))
-      .filter((result) => result.score > 0)
-      .sort((a, b) => b.score - a.score || a.index - b.index)
-      .map((result) => result.command);
+    return rankItems(BUILT_IN_COMMANDS, queryTerms, [
+      ["title", 300],
+      ["subtitle", 200],
+      ["aliases", 100]
+    ]);
   }
 
-  function scoreCommand(command, normalizedQuery) {
-    const titleScore = scoreText(getCommandSearchText(command, "title"), normalizedQuery, 300);
-    if (titleScore > 0) {
-      return titleScore;
+  function rankItems(items, queryTerms, fields) {
+    return items
+      .map((item, index) => ({
+        item,
+        index,
+        match: scoreItemFields(item, queryTerms, fields)
+      }))
+      .filter((result) => result.match.matchedTerms > 0)
+      .sort((a, b) => {
+        return (
+          b.match.matchedTerms - a.match.matchedTerms ||
+          b.match.score - a.match.score ||
+          a.index - b.index
+        );
+      })
+      .map((result) => result.item);
+  }
+
+  function scoreItemFields(item, queryTerms, fields) {
+    let matchedTerms = 0;
+    let score = 0;
+
+    for (const term of queryTerms) {
+      const termScore = fields.reduce((bestScore, [field, baseScore]) => {
+        const fieldScore = scoreText(getItemFieldSearchText(item, field), term, baseScore);
+        return Math.max(bestScore, fieldScore);
+      }, 0);
+
+      if (termScore > 0) {
+        matchedTerms += 1;
+        score += termScore;
+      }
     }
 
-    const subtitleScore = scoreText(getCommandSearchText(command, "subtitle"), normalizedQuery, 200);
-    if (subtitleScore > 0) {
-      return subtitleScore;
-    }
-
-    return scoreText(getCommandSearchText(command, "aliases"), normalizedQuery, 100);
+    return { matchedTerms, score };
   }
 
   function scoreText(searchText, normalizedQuery, baseScore) {
@@ -345,10 +344,6 @@
     }
 
     return searchText.includes(normalizedQuery) ? baseScore : 0;
-  }
-
-  function getCommandSearchText(command, field) {
-    return getItemFieldSearchText(command, field);
   }
 
   function getItemFieldSearchText(item, field) {
@@ -583,6 +578,11 @@
     if (command.action === "new-tab") {
       setStatus("Opening new tab...");
       return chrome.runtime.sendMessage({ type: MESSAGE_TYPES.NEW_TAB });
+    }
+
+    if (command.action === "copy-current-tab") {
+      setStatus("Copying current tab...");
+      return chrome.runtime.sendMessage({ type: MESSAGE_TYPES.COPY_CURRENT_TAB });
     }
 
     if (command.action === "close-current-tab") {

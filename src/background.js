@@ -6,6 +6,7 @@ const MESSAGE_TYPES = {
   GET_THEME: "GET_THEME",
   SET_THEME: "SET_THEME",
   NEW_TAB: "NEW_TAB",
+  COPY_CURRENT_TAB: "COPY_CURRENT_TAB",
   CLOSE_CURRENT_TAB: "CLOSE_CURRENT_TAB",
   RELOAD_CURRENT_TAB: "RELOAD_CURRENT_TAB",
   ACTIVATE_TAB: "ACTIVATE_TAB",
@@ -71,6 +72,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === MESSAGE_TYPES.NEW_TAB) {
     openNewTab(sender.tab?.windowId)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === MESSAGE_TYPES.COPY_CURRENT_TAB) {
+    copyCurrentTab(sender.tab?.id, sender.tab?.windowId)
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
@@ -192,6 +200,21 @@ async function openNewTab(windowId) {
   }
 
   if (Number.isInteger(tab.id)) {
+    await chrome.tabs.update(tab.id, { active: true });
+  }
+}
+
+async function copyCurrentTab(tabId, windowId) {
+  if (!Number.isInteger(tabId)) {
+    throw new Error("Invalid current tab.");
+  }
+
+  const tab = await chrome.tabs.duplicate(tabId);
+  if (Number.isInteger(windowId)) {
+    await chrome.windows.update(windowId, { focused: true });
+  }
+
+  if (Number.isInteger(tab?.id)) {
     await chrome.tabs.update(tab.id, { active: true });
   }
 }
