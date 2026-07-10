@@ -16,6 +16,7 @@
     COPY_CURRENT_TAB: "COPY_CURRENT_TAB",
     CLOSE_CURRENT_TAB: "CLOSE_CURRENT_TAB",
     RELOAD_CURRENT_TAB: "RELOAD_CURRENT_TAB",
+    NAVIGATE_CURRENT_TAB: "NAVIGATE_CURRENT_TAB",
     ACTIVATE_TAB: "ACTIVATE_TAB",
     OPEN_BOOKMARK: "OPEN_BOOKMARK"
   };
@@ -248,28 +249,49 @@
 
   function applyFilter(query) {
     const queryTerms = pinyinSearch.normalizeSearchTerms(query);
-    const tabs = filterTabs(queryTerms);
     const bookmarks = filterBookmarks(queryTerms);
+    const tabs = filterTabs(queryTerms, bookmarks);
     const commands = filterCommands(queryTerms);
+    const urlCommand = createUrlCommand(query);
+    const urlCommands = urlCommand ? [urlCommand] : [];
 
-    state.visibleItems = [...tabs, ...bookmarks, ...commands];
+    state.visibleItems = [...tabs, ...bookmarks, ...commands, ...urlCommands];
     if (state.selectedIndex >= state.visibleItems.length) {
       state.selectedIndex = Math.max(0, state.visibleItems.length - 1);
     }
 
-    renderResults({ tabs, bookmarks, commands });
+    renderResults({ tabs, bookmarks, commands, urlCommands });
   }
 
-  function filterTabs(queryTerms) {
+  function filterTabs(queryTerms, matchedBookmarks) {
     const tabs = state.sections[ITEM_TYPES.TAB];
     if (queryTerms.length === 0) {
-      return tabs.slice(0, RECENT_TAB_DISPLAY_LIMIT);
+      return tabs.filter((tab) => !tab.active).slice(0, RECENT_TAB_DISPLAY_LIMIT);
     }
 
-    return rankItems(tabs, queryTerms, [
+    const matchedTabs = rankItems(tabs, queryTerms, [
       ["title", 300],
       ["url", 200]
     ]);
+    const matchedTabIds = new Set(matchedTabs.map((tab) => tab.id));
+    const bookmarkUrlRanks = new Map();
+
+    matchedBookmarks.forEach((bookmark, index) => {
+      const comparableUrl = getComparableUrl(bookmark.url);
+      if (comparableUrl && !bookmarkUrlRanks.has(comparableUrl)) {
+        bookmarkUrlRanks.set(comparableUrl, index);
+      }
+    });
+
+    const relatedTabs = tabs
+      .filter((tab) => {
+        return !matchedTabIds.has(tab.id) && bookmarkUrlRanks.has(getComparableUrl(tab.url));
+      })
+      .sort((a, b) => {
+        return bookmarkUrlRanks.get(getComparableUrl(a.url)) - bookmarkUrlRanks.get(getComparableUrl(b.url));
+      });
+
+    return [...matchedTabs, ...relatedTabs];
   }
 
   function filterBookmarks(queryTerms) {
@@ -355,10 +377,76 @@
     return item[key];
   }
 
+  function getComparableUrl(value) {
+    try {
+      const url = new URL(value);
+      const pathname = url.pathname.replace(/\/+$/, "") || "/";
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        const port = url.port ? `:${url.port}` : "";
+        return `${url.hostname}${port}${pathname}`;
+      }
+
+      return `${url.protocol}//${url.host}${pathname}`;
+    } catch {
+      return "";
+    }
+  }
+
+  function createUrlCommand(query) {
+    const url = normalizeInputUrl(query);
+    if (!url) {
+      return null;
+    }
+
+    return {
+      type: ITEM_TYPES.COMMAND,
+      id: "navigate-input-url",
+      title: `Go to ${url}`,
+      subtitle: "Open this URL in the current tab",
+      iconText: ">",
+      action: "navigate-current-tab",
+      url
+    };
+  }
+
+  function normalizeInputUrl(value) {
+    const input = String(value || "").trim();
+    if (!input || /\s/.test(input)) {
+      return "";
+    }
+
+    const hasScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(input);
+    if (hasScheme && !/^(?:https?|edge|chrome):\/\//i.test(input)) {
+      return "";
+    }
+
+    try {
+      const url = new URL(hasScheme ? input : `https://${input}`);
+      if (
+        url.protocol !== "http:" &&
+        url.protocol !== "https:" &&
+        url.protocol !== "edge:" &&
+        url.protocol !== "chrome:"
+      ) {
+        return "";
+      }
+
+      const isRecognizableBareHost =
+        hasScheme ||
+        url.hostname === "localhost" ||
+        url.hostname.includes(".") ||
+        url.hostname.includes(":");
+      return isRecognizableBareHost ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+
   function renderResults({
     tabs = [],
     bookmarks = [],
     commands = [],
+    urlCommands = [],
     includeEmptySections = true
   }) {
     state.list.textContent = "";
@@ -373,13 +461,17 @@
     if (commands.length > 0) {
       appendSection(fragment, "Built-in Commands", commands, "");
     }
+    if (urlCommands.length > 0) {
+      appendSection(fragment, "Go to URL", urlCommands, "");
+    }
     state.list.append(fragment);
     syncSelectedItem();
 
     const tabLabel = `${tabs.length} recent tab${tabs.length === 1 ? "" : "s"}`;
     const bookmarkLabel = `${bookmarks.length} bookmark${bookmarks.length === 1 ? "" : "s"}`;
+    const commandCount = commands.length + urlCommands.length;
     const commandLabel =
-      commands.length > 0 ? `, ${commands.length} command${commands.length === 1 ? "" : "s"}` : "";
+      commandCount > 0 ? `, ${commandCount} command${commandCount === 1 ? "" : "s"}` : "";
     setStatus(`${tabLabel}, ${bookmarkLabel}${commandLabel}`);
   }
 
@@ -593,6 +685,14 @@
     if (command.action === "reload-current-tab") {
       setStatus("Reloading current tab...");
       return chrome.runtime.sendMessage({ type: MESSAGE_TYPES.RELOAD_CURRENT_TAB });
+    }
+
+    if (command.action === "navigate-current-tab" && command.url) {
+      setStatus(`Going to ${command.url}...`);
+      return chrome.runtime.sendMessage({
+        type: MESSAGE_TYPES.NAVIGATE_CURRENT_TAB,
+        url: command.url
+      });
     }
 
     if (command.action === "show-built-in-commands") {

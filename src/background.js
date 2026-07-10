@@ -9,6 +9,7 @@ const MESSAGE_TYPES = {
   COPY_CURRENT_TAB: "COPY_CURRENT_TAB",
   CLOSE_CURRENT_TAB: "CLOSE_CURRENT_TAB",
   RELOAD_CURRENT_TAB: "RELOAD_CURRENT_TAB",
+  NAVIGATE_CURRENT_TAB: "NAVIGATE_CURRENT_TAB",
   ACTIVATE_TAB: "ACTIVATE_TAB",
   OPEN_BOOKMARK: "OPEN_BOOKMARK"
 };
@@ -98,6 +99,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === MESSAGE_TYPES.NAVIGATE_CURRENT_TAB) {
+    navigateCurrentTab(sender.tab?.id, message.url)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message?.type === MESSAGE_TYPES.ACTIVATE_TAB) {
     activateTab(message.tabId)
       .then(() => sendResponse({ ok: true }))
@@ -140,7 +148,6 @@ async function getCurrentWindowTabs(windowId) {
   const queryInfo = Number.isInteger(windowId) ? { windowId } : { currentWindow: true };
   const tabs = await chrome.tabs.query(queryInfo);
   return tabs
-    .filter((tab) => !tab.active)
     .sort(compareRecentActivity)
     .map((tab) => ({
       id: tab.id,
@@ -237,6 +244,17 @@ async function reloadCurrentTab(tabId) {
   }, 0);
 }
 
+async function navigateCurrentTab(tabId, url) {
+  if (!Number.isInteger(tabId)) {
+    throw new Error("Invalid current tab.");
+  }
+  if (!isSupportedNavigationUrl(url)) {
+    throw new Error("Unsupported URL.");
+  }
+
+  await chrome.tabs.update(tabId, { url });
+}
+
 async function getTheme() {
   const values = await chrome.storage.local.get(THEME_STORAGE_KEY);
   const theme = values[THEME_STORAGE_KEY];
@@ -254,6 +272,19 @@ async function setTheme(theme) {
 
 function isSupportedTabUrl(url = "") {
   return url.startsWith("http://") || url.startsWith("https://");
+}
+
+function isSupportedNavigationUrl(value = "") {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "http:" ||
+      url.protocol === "https:" ||
+      ((url.protocol === "edge:" || url.protocol === "chrome:") && Boolean(url.hostname))
+    );
+  } catch {
+    return false;
+  }
 }
 
 function compareRecentActivity(a, b) {
