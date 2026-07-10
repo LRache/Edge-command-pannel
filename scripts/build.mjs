@@ -17,7 +17,8 @@ await mkdir(outputDirectory, { recursive: true });
 await build({
   entryPoints: {
     "src/background": resolve(projectRoot, "src/background.ts"),
-    "src/content": resolve(projectRoot, "src/content.ts")
+    "src/content": resolve(projectRoot, "src/content.ts"),
+    "src/options": resolve(projectRoot, "src/options.ts")
   },
   bundle: true,
   format: "iife",
