@@ -1,0 +1,19 @@
+[
+  ".github/workflows/release.yml",
+  ".gitignore",
+  "LICENSE",
+  "README.md",
+  "config/update-tracked-files.json",
+  "manifest.json",
+  "package-lock.json",
+  "package.json",
+  "scripts/build.mjs",
+  "src/background.ts",
+  "src/content.ts",
+  "src/messages.ts",
+  "src/panel.css",
+  "src/pinyin.ts",
+  "src/vendor/pinyin-pro.LICENSE",
+  "src/vendor/pinyin-pro.js",
+  "tsconfig.json"
+]

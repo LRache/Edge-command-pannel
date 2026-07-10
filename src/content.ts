@@ -1,3 +1,89 @@
+import { buildSearchText, normalizeSearchTerms } from "./pinyin";
+import {
+  getErrorMessage,
+  isPanelRequest,
+  MESSAGE_TYPES,
+  type MessageResponse,
+  type PanelBookmark,
+  type PanelRequest,
+  type PanelTab,
+  type RepositoryUpdateStatus,
+  type Theme
+} from "./messages";
+
+declare global {
+  var __edgeCommandPanelLoaded: boolean | undefined;
+}
+
+const ITEM_TYPES = {
+  TAB: "tab",
+  BOOKMARK: "bookmark",
+  COMMAND: "command"
+} as const;
+
+type ItemType = (typeof ITEM_TYPES)[keyof typeof ITEM_TYPES];
+type CommandAction =
+  | "show-built-in-commands"
+  | "new-tab"
+  | "close-current-tab"
+  | "copy-current-tab"
+  | "reload-current-tab"
+  | "navigate-current-tab"
+  | "open-update-page";
+
+interface TabItem extends PanelTab {
+  type: typeof ITEM_TYPES.TAB;
+}
+
+interface BookmarkItem extends PanelBookmark {
+  type: typeof ITEM_TYPES.BOOKMARK;
+}
+
+interface CommandItem {
+  type: typeof ITEM_TYPES.COMMAND;
+  id: string;
+  title: string;
+  subtitle: string;
+  iconText: string;
+  aliases?: string;
+  action?: CommandAction;
+  theme?: Theme;
+  url?: string;
+}
+
+type PanelItem = TabItem | BookmarkItem | CommandItem;
+type SearchableField = "title" | "url" | "path" | "subtitle" | "aliases";
+type SearchField = readonly [field: SearchableField, baseScore: number];
+type ActionResponse =
+  | { ok: true; keepOpen?: boolean }
+  | { ok: false; error: string };
+
+interface PanelState {
+  root: HTMLDivElement | null;
+  input: HTMLInputElement | null;
+  list: HTMLDivElement | null;
+  status: HTMLDivElement | null;
+  sections: {
+    tab: TabItem[];
+    bookmark: BookmarkItem[];
+  };
+  visibleItems: PanelItem[];
+  selectedIndex: number;
+  theme: Theme;
+  updateStatus: RepositoryUpdateStatus | null;
+  previousFocus: HTMLElement | null;
+  ignoreMouseSelectionUntil: number;
+}
+
+interface RenderOptions {
+  tabs?: TabItem[];
+  bookmarks?: BookmarkItem[];
+  commands?: CommandItem[];
+  urlCommands?: CommandItem[];
+  updateCommands?: CommandItem[];
+  includeEmptySections?: boolean;
+}
+
 (() => {
   if (globalThis.__edgeCommandPanelLoaded) {
     return;
@@ -5,31 +91,9 @@
 
   globalThis.__edgeCommandPanelLoaded = true;
 
-  const MESSAGE_TYPES = {
-    PING: "PING",
-    TOGGLE_PANEL: "TOGGLE_PANEL",
-    GET_TABS: "GET_TABS",
-    GET_BOOKMARKS: "GET_BOOKMARKS",
-    GET_THEME: "GET_THEME",
-    SET_THEME: "SET_THEME",
-    NEW_TAB: "NEW_TAB",
-    COPY_CURRENT_TAB: "COPY_CURRENT_TAB",
-    CLOSE_CURRENT_TAB: "CLOSE_CURRENT_TAB",
-    RELOAD_CURRENT_TAB: "RELOAD_CURRENT_TAB",
-    NAVIGATE_CURRENT_TAB: "NAVIGATE_CURRENT_TAB",
-    ACTIVATE_TAB: "ACTIVATE_TAB",
-    OPEN_BOOKMARK: "OPEN_BOOKMARK"
-  };
-
-  const ITEM_TYPES = {
-    TAB: "tab",
-    BOOKMARK: "bookmark",
-    COMMAND: "command"
-  };
-
   const RECENT_TAB_DISPLAY_LIMIT = 8;
-  const pinyinSearch = globalThis.EdgeCommandPanelPinyin;
-  const BUILT_IN_COMMANDS = [
+  const pinyinSearch = { buildSearchText, normalizeSearchTerms };
+  const BUILT_IN_COMMANDS: CommandItem[] = [
     {
       type: ITEM_TYPES.COMMAND,
       id: "help-built-in-commands",
@@ -95,7 +159,7 @@
     }
   ];
 
-  const state = {
+  const state: PanelState = {
     root: null,
     input: null,
     list: null,
@@ -107,22 +171,31 @@
     visibleItems: [],
     selectedIndex: 0,
     theme: "dark",
+    updateStatus: null,
     previousFocus: null,
     ignoreMouseSelectionUntil: 0
   };
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === MESSAGE_TYPES.PING) {
-      sendResponse({ ok: true });
-      return;
+  const searchTextCache = new WeakMap<PanelItem, Map<SearchableField, string>>();
+
+  chrome.runtime.onMessage.addListener((rawMessage: unknown, _sender, sendResponse) => {
+    if (!isPanelRequest(rawMessage)) {
+      return false;
     }
 
-    if (message?.type === MESSAGE_TYPES.TOGGLE_PANEL) {
+    if (rawMessage.type === MESSAGE_TYPES.PING) {
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (rawMessage.type === MESSAGE_TYPES.TOGGLE_PANEL) {
       togglePanel();
     }
+
+    return false;
   });
 
-  function togglePanel() {
+  function togglePanel(): void {
     if (state.root?.isConnected) {
       closePanel();
       return;
@@ -131,16 +204,16 @@
     openPanel();
   }
 
-  async function openPanel() {
+  async function openPanel(): Promise<void> {
     state.previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    ensurePanel();
-    document.documentElement.append(state.root);
-    state.root.hidden = false;
-    state.input.value = "";
+    const elements = ensurePanel();
+    document.documentElement.append(elements.root);
+    elements.root.hidden = false;
+    elements.input.value = "";
     state.selectedIndex = 0;
-    state.input.focus();
+    elements.input.focus();
     setStatus("Loading recent tabs and bookmark bar...");
-    state.list.textContent = "";
+    elements.list.textContent = "";
 
     try {
       const [theme, tabs, bookmarks] = await Promise.all([
@@ -152,16 +225,17 @@
       state.sections[ITEM_TYPES.TAB] = tabs;
       state.sections[ITEM_TYPES.BOOKMARK] = bookmarks;
       applyFilter("");
+      void refreshUpdateStatus();
     } catch (error) {
       state.sections[ITEM_TYPES.TAB] = [];
       state.sections[ITEM_TYPES.BOOKMARK] = [];
       state.visibleItems = [];
       renderResults({ tabs: [], bookmarks: [], commands: [] });
-      setStatus(error.message || "Unable to load command panel items.");
+      setStatus(getErrorMessage(error, "Unable to load command panel items."));
     }
   }
 
-  function closePanel() {
+  function closePanel(): void {
     if (!state.root?.isConnected) {
       return;
     }
@@ -172,9 +246,14 @@
     }
   }
 
-  function ensurePanel() {
-    if (state.root) {
-      return;
+  function ensurePanel(): {
+    root: HTMLDivElement;
+    input: HTMLInputElement;
+    list: HTMLDivElement;
+    status: HTMLDivElement;
+  } {
+    if (state.root && state.input && state.list && state.status) {
+      return { root: state.root, input: state.input, list: state.list, status: state.status };
     }
 
     state.root = document.createElement("div");
@@ -195,14 +274,15 @@
     panel.className = "ecp-panel";
 
     state.input = document.createElement("input");
-    state.input.className = "ecp-input";
-    state.input.type = "search";
-    state.input.placeholder = "Search recent tabs, bookmark bar, and commands";
-    state.input.autocomplete = "off";
-    state.input.spellcheck = false;
-    state.input.setAttribute("aria-label", "Search recent tabs, bookmark bar, and commands");
-    state.input.addEventListener("input", () => applyFilter(state.input.value));
-    state.input.addEventListener("keydown", handleKeyDown);
+    const input = state.input;
+    input.className = "ecp-input";
+    input.type = "search";
+    input.placeholder = "Search recent tabs, bookmark bar, and commands";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.setAttribute("aria-label", "Search recent tabs, bookmark bar, and commands");
+    input.addEventListener("input", () => applyFilter(input.value));
+    input.addEventListener("keydown", handleKeyDown);
 
     state.status = document.createElement("div");
     state.status.className = "ecp-status";
@@ -215,10 +295,12 @@
 
     panel.append(state.input, state.status, state.list);
     state.root.append(backdrop, panel);
+
+    return { root: state.root, input: state.input, list: state.list, status: state.status };
   }
 
-  async function requestTabs() {
-    const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPES.GET_TABS });
+  async function requestTabs(): Promise<TabItem[]> {
+    const response = await sendMessage<{ tabs: PanelTab[] }>({ type: MESSAGE_TYPES.GET_TABS });
     if (!response?.ok) {
       throw new Error(response?.error || "Unable to load recent tabs.");
     }
@@ -226,8 +308,10 @@
     return (response.tabs || []).map((tab) => ({ ...tab, type: ITEM_TYPES.TAB }));
   }
 
-  async function requestBookmarks() {
-    const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPES.GET_BOOKMARKS });
+  async function requestBookmarks(): Promise<BookmarkItem[]> {
+    const response = await sendMessage<{ bookmarks: PanelBookmark[] }>({
+      type: MESSAGE_TYPES.GET_BOOKMARKS
+    });
     if (!response?.ok) {
       throw new Error(response?.error || "Unable to load bookmark bar.");
     }
@@ -238,8 +322,8 @@
     }));
   }
 
-  async function requestTheme() {
-    const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPES.GET_THEME });
+  async function requestTheme(): Promise<Theme> {
+    const response = await sendMessage<{ theme: Theme }>({ type: MESSAGE_TYPES.GET_THEME });
     if (!response?.ok) {
       throw new Error(response?.error || "Unable to load theme.");
     }
@@ -247,23 +331,42 @@
     return response.theme || "dark";
   }
 
-  function applyFilter(query) {
+  async function refreshUpdateStatus(): Promise<void> {
+    try {
+      const response = await sendMessage<{ status: RepositoryUpdateStatus }>({
+        type: MESSAGE_TYPES.GET_UPDATE_STATUS
+      });
+      if (!response?.ok) {
+        return;
+      }
+
+      state.updateStatus = response.status || null;
+      if (state.root?.isConnected) {
+        applyFilter(state.input?.value ?? "");
+      }
+    } catch {
+      // Update checks must not interfere with the command panel.
+    }
+  }
+
+  function applyFilter(query: string): void {
     const queryTerms = pinyinSearch.normalizeSearchTerms(query);
     const bookmarks = filterBookmarks(queryTerms);
     const tabs = filterTabs(queryTerms, bookmarks);
     const commands = filterCommands(queryTerms);
     const urlCommand = createUrlCommand(query);
     const urlCommands = urlCommand ? [urlCommand] : [];
+    const updateCommands = createUpdateCommands();
 
-    state.visibleItems = [...tabs, ...bookmarks, ...commands, ...urlCommands];
+    state.visibleItems = [...tabs, ...bookmarks, ...commands, ...urlCommands, ...updateCommands];
     if (state.selectedIndex >= state.visibleItems.length) {
       state.selectedIndex = Math.max(0, state.visibleItems.length - 1);
     }
 
-    renderResults({ tabs, bookmarks, commands, urlCommands });
+    renderResults({ tabs, bookmarks, commands, urlCommands, updateCommands });
   }
 
-  function filterTabs(queryTerms, matchedBookmarks) {
+  function filterTabs(queryTerms: string[], matchedBookmarks: BookmarkItem[]): TabItem[] {
     const tabs = state.sections[ITEM_TYPES.TAB];
     if (queryTerms.length === 0) {
       return tabs.filter((tab) => !tab.active).slice(0, RECENT_TAB_DISPLAY_LIMIT);
@@ -294,7 +397,7 @@
     return [...matchedTabs, ...relatedTabs];
   }
 
-  function filterBookmarks(queryTerms) {
+  function filterBookmarks(queryTerms: string[]): BookmarkItem[] {
     const bookmarks = state.sections[ITEM_TYPES.BOOKMARK];
     if (queryTerms.length === 0) {
       return [...bookmarks];
@@ -307,7 +410,7 @@
     ]);
   }
 
-  function filterCommands(queryTerms) {
+  function filterCommands(queryTerms: string[]): CommandItem[] {
     if (queryTerms.length === 0) {
       return [];
     }
@@ -319,7 +422,11 @@
     ]);
   }
 
-  function rankItems(items, queryTerms, fields) {
+  function rankItems<T extends PanelItem>(
+    items: readonly T[],
+    queryTerms: string[],
+    fields: readonly SearchField[]
+  ): T[] {
     return items
       .map((item, index) => ({
         item,
@@ -337,7 +444,11 @@
       .map((result) => result.item);
   }
 
-  function scoreItemFields(item, queryTerms, fields) {
+  function scoreItemFields(
+    item: PanelItem,
+    queryTerms: string[],
+    fields: readonly SearchField[]
+  ): { matchedTerms: number; score: number } {
     let matchedTerms = 0;
     let score = 0;
 
@@ -356,7 +467,7 @@
     return { matchedTerms, score };
   }
 
-  function scoreText(searchText, normalizedQuery, baseScore) {
+  function scoreText(searchText: string, normalizedQuery: string, baseScore: number): number {
     if (searchText.startsWith(normalizedQuery)) {
       return baseScore + 50;
     }
@@ -368,16 +479,24 @@
     return searchText.includes(normalizedQuery) ? baseScore : 0;
   }
 
-  function getItemFieldSearchText(item, field) {
-    const key = `${field}SearchText`;
-    if (!item[key]) {
-      item[key] = pinyinSearch.buildSearchText(item[field] || "");
+  function getItemFieldSearchText(item: PanelItem, field: SearchableField): string {
+    let itemCache = searchTextCache.get(item);
+    if (!itemCache) {
+      itemCache = new Map<SearchableField, string>();
+      searchTextCache.set(item, itemCache);
     }
 
-    return item[key];
+    const cachedText = itemCache.get(field);
+    if (cachedText !== undefined) {
+      return cachedText;
+    }
+
+    const searchText = pinyinSearch.buildSearchText(getSearchableValue(item, field));
+    itemCache.set(field, searchText);
+    return searchText;
   }
 
-  function getComparableUrl(value) {
+  function getComparableUrl(value: string): string {
     try {
       const url = new URL(value);
       const pathname = url.pathname.replace(/\/+$/, "") || "/";
@@ -392,7 +511,7 @@
     }
   }
 
-  function createUrlCommand(query) {
+  function createUrlCommand(query: string): CommandItem | null {
     const url = normalizeInputUrl(query);
     if (!url) {
       return null;
@@ -409,7 +528,7 @@
     };
   }
 
-  function normalizeInputUrl(value) {
+  function normalizeInputUrl(value: unknown): string {
     const input = String(value || "").trim();
     if (!input || /\s/.test(input)) {
       return "";
@@ -442,14 +561,36 @@
     }
   }
 
+  function createUpdateCommands(): CommandItem[] {
+    const updateStatus = state.updateStatus;
+    if (!updateStatus?.available || !updateStatus.latestCommitUrl) {
+      return [];
+    }
+
+    const shortCommit = String(updateStatus.latestCommit || "").slice(0, 7);
+    return [
+      {
+        type: ITEM_TYPES.COMMAND,
+        id: "open-repository-update",
+        title: `Update available${shortCommit ? ` (${shortCommit})` : ""}`,
+        subtitle: updateStatus.latestMessage || "Open the latest repository commit",
+        iconText: "U",
+        action: "open-update-page",
+        url: updateStatus.latestCommitUrl
+      }
+    ];
+  }
+
   function renderResults({
     tabs = [],
     bookmarks = [],
     commands = [],
     urlCommands = [],
+    updateCommands = [],
     includeEmptySections = true
-  }) {
-    state.list.textContent = "";
+  }: RenderOptions): void {
+    const list = ensurePanel().list;
+    list.textContent = "";
 
     const fragment = document.createDocumentFragment();
     if (includeEmptySections || tabs.length > 0) {
@@ -464,18 +605,26 @@
     if (urlCommands.length > 0) {
       appendSection(fragment, "Go to URL", urlCommands, "");
     }
-    state.list.append(fragment);
+    if (updateCommands.length > 0) {
+      appendSection(fragment, "Update Available", updateCommands, "");
+    }
+    list.append(fragment);
     syncSelectedItem();
 
     const tabLabel = `${tabs.length} recent tab${tabs.length === 1 ? "" : "s"}`;
     const bookmarkLabel = `${bookmarks.length} bookmark${bookmarks.length === 1 ? "" : "s"}`;
-    const commandCount = commands.length + urlCommands.length;
+    const commandCount = commands.length + urlCommands.length + updateCommands.length;
     const commandLabel =
       commandCount > 0 ? `, ${commandCount} command${commandCount === 1 ? "" : "s"}` : "";
     setStatus(`${tabLabel}, ${bookmarkLabel}${commandLabel}`);
   }
 
-  function appendSection(fragment, title, items, emptyText) {
+  function appendSection(
+    fragment: DocumentFragment,
+    title: string,
+    items: PanelItem[],
+    emptyText: string
+  ): void {
     const section = document.createElement("section");
     section.className = "ecp-section";
 
@@ -500,7 +649,7 @@
     fragment.append(section);
   }
 
-  function createItemButton(item) {
+  function createItemButton(item: PanelItem): HTMLButtonElement {
     const option = document.createElement("button");
     option.className = "ecp-item";
     option.type = "button";
@@ -524,15 +673,19 @@
 
     const icon = document.createElement("span");
     icon.className = "ecp-favicon";
-    if (item.favIconUrl) {
+    if (item.type !== ITEM_TYPES.COMMAND && item.favIconUrl) {
       const image = document.createElement("img");
       image.src = item.favIconUrl;
       image.alt = "";
       image.loading = "lazy";
       icon.append(image);
     } else {
-      icon.textContent = item.type === ITEM_TYPES.TAB ? "T" : "B";
-      icon.textContent = item.iconText || icon.textContent;
+      icon.textContent =
+        item.type === ITEM_TYPES.COMMAND
+          ? item.iconText
+          : item.type === ITEM_TYPES.TAB
+            ? "T"
+            : "B";
     }
 
     const body = document.createElement("span");
@@ -555,7 +708,7 @@
     body.append(title, url);
     option.append(icon, body);
 
-    if (item.active) {
+    if (item.type === ITEM_TYPES.TAB && item.active) {
       const active = document.createElement("span");
       active.className = "ecp-active";
       active.textContent = "Active";
@@ -565,8 +718,8 @@
     return option;
   }
 
-  function syncSelectedItem() {
-    const items = [...state.list.querySelectorAll(".ecp-item")];
+  function syncSelectedItem(): void {
+    const items = [...ensurePanel().list.querySelectorAll<HTMLElement>(".ecp-item")];
     items.forEach((item, index) => {
       const isSelected = index === state.selectedIndex;
       item.dataset.selected = String(isSelected);
@@ -576,7 +729,7 @@
     items[state.selectedIndex]?.scrollIntoView({ block: "nearest" });
   }
 
-  function handleKeyDown(event) {
+  function handleKeyDown(event: KeyboardEvent): void {
     if (event.key === "Escape") {
       event.preventDefault();
       closePanel();
@@ -601,7 +754,7 @@
     }
   }
 
-  function moveSelection(delta) {
+  function moveSelection(delta: number): void {
     if (state.visibleItems.length === 0) {
       return;
     }
@@ -612,7 +765,7 @@
     syncSelectedItem();
   }
 
-  async function selectItem(index) {
+  async function selectItem(index: number): Promise<void> {
     const item = state.visibleItems[index];
     if (!item) {
       return;
@@ -638,59 +791,67 @@
     }
   }
 
-  async function activateTab(tab) {
+  async function activateTab(tab: TabItem): Promise<ActionResponse> {
     if (!tab?.id) {
       return { ok: false, error: "Invalid tab." };
     }
 
     setStatus("Switching tab...");
-    return chrome.runtime.sendMessage({
+    return sendMessage({
       type: MESSAGE_TYPES.ACTIVATE_TAB,
       tabId: tab.id
     });
   }
 
-  async function openBookmark(bookmark) {
+  async function openBookmark(bookmark: BookmarkItem): Promise<ActionResponse> {
     if (!bookmark?.url) {
       return { ok: false, error: "Invalid bookmark." };
     }
 
     setStatus("Opening bookmark...");
-    return chrome.runtime.sendMessage({
+    return sendMessage({
       type: MESSAGE_TYPES.OPEN_BOOKMARK,
       url: bookmark.url
     });
   }
 
-  async function runCommand(command) {
+  async function runCommand(command: CommandItem): Promise<ActionResponse> {
     if (!command) {
       return { ok: false, error: "Invalid command." };
     }
 
     if (command.action === "new-tab") {
       setStatus("Opening new tab...");
-      return chrome.runtime.sendMessage({ type: MESSAGE_TYPES.NEW_TAB });
+      return sendMessage({ type: MESSAGE_TYPES.NEW_TAB });
     }
 
     if (command.action === "copy-current-tab") {
       setStatus("Copying current tab...");
-      return chrome.runtime.sendMessage({ type: MESSAGE_TYPES.COPY_CURRENT_TAB });
+      return sendMessage({ type: MESSAGE_TYPES.COPY_CURRENT_TAB });
     }
 
     if (command.action === "close-current-tab") {
       setStatus("Closing current tab...");
-      return chrome.runtime.sendMessage({ type: MESSAGE_TYPES.CLOSE_CURRENT_TAB });
+      return sendMessage({ type: MESSAGE_TYPES.CLOSE_CURRENT_TAB });
     }
 
     if (command.action === "reload-current-tab") {
       setStatus("Reloading current tab...");
-      return chrome.runtime.sendMessage({ type: MESSAGE_TYPES.RELOAD_CURRENT_TAB });
+      return sendMessage({ type: MESSAGE_TYPES.RELOAD_CURRENT_TAB });
     }
 
     if (command.action === "navigate-current-tab" && command.url) {
       setStatus(`Going to ${command.url}...`);
-      return chrome.runtime.sendMessage({
+      return sendMessage({
         type: MESSAGE_TYPES.NAVIGATE_CURRENT_TAB,
+        url: command.url
+      });
+    }
+
+    if (command.action === "open-update-page" && command.url) {
+      setStatus("Opening the latest repository commit...");
+      return sendMessage({
+        type: MESSAGE_TYPES.OPEN_BOOKMARK,
         url: command.url
       });
     }
@@ -705,7 +866,7 @@
     }
 
     setStatus(`Switching to ${command.theme} theme...`);
-    const response = await chrome.runtime.sendMessage({
+    const response = await sendMessage<{ theme: Theme }>({
       type: MESSAGE_TYPES.SET_THEME,
       theme: command.theme
     });
@@ -718,15 +879,15 @@
     return response;
   }
 
-  function applyTheme(theme) {
+  function applyTheme(theme: Theme): void {
     state.theme = theme === "light" ? "light" : "dark";
     if (state.root) {
       state.root.dataset.theme = state.theme;
     }
   }
 
-  function showBuiltInCommands() {
-    state.input.value = "help";
+  function showBuiltInCommands(): void {
+    ensurePanel().input.value = "help";
     state.selectedIndex = 0;
     state.visibleItems = [...BUILT_IN_COMMANDS];
     renderResults({
@@ -738,11 +899,11 @@
     setStatus(`${BUILT_IN_COMMANDS.length} built-in commands`);
   }
 
-  function setStatus(message) {
-    state.status.textContent = message;
+  function setStatus(message: string): void {
+    ensurePanel().status.textContent = message;
   }
 
-  function cleanUrl(url) {
+  function cleanUrl(url: string): string {
     if (!url) {
       return "";
     }
@@ -753,5 +914,16 @@
     } catch {
       return url;
     }
+  }
+
+  function getSearchableValue(item: PanelItem, field: SearchableField): string {
+    const value = (item as Partial<Record<SearchableField, string>>)[field];
+    return value ?? "";
+  }
+
+  async function sendMessage<T extends object = Record<string, never>>(
+    request: PanelRequest
+  ): Promise<MessageResponse<T>> {
+    return (await chrome.runtime.sendMessage(request)) as MessageResponse<T>;
   }
 })();
