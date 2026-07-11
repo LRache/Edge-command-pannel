@@ -3,17 +3,21 @@ const MESSAGE_TYPES = {
   TOGGLE_PANEL: "TOGGLE_PANEL",
   GET_TABS: "GET_TABS",
   GET_BOOKMARKS: "GET_BOOKMARKS",
+  GET_URL_MAPPINGS: "GET_URL_MAPPINGS",
   GET_THEME: "GET_THEME",
   SET_THEME: "SET_THEME",
   NEW_TAB: "NEW_TAB",
   CLOSE_CURRENT_TAB: "CLOSE_CURRENT_TAB",
   RELOAD_CURRENT_TAB: "RELOAD_CURRENT_TAB",
   ACTIVATE_TAB: "ACTIVATE_TAB",
-  OPEN_BOOKMARK: "OPEN_BOOKMARK"
+  OPEN_BOOKMARK: "OPEN_BOOKMARK",
+  OPEN_URL: "OPEN_URL",
+  OPEN_OPTIONS: "OPEN_OPTIONS"
 };
 
 const DEFAULT_THEME = "dark";
 const THEME_STORAGE_KEY = "commandPanelTheme";
+const URL_MAPPINGS_STORAGE_KEY = "commandPanelUrlMappings";
 const THEMES = new Set(["light", "dark"]);
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
@@ -51,6 +55,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === MESSAGE_TYPES.GET_BOOKMARKS) {
     getBookmarkBarItems()
       .then((bookmarks) => sendResponse({ ok: true, bookmarks }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === MESSAGE_TYPES.GET_URL_MAPPINGS) {
+    getUrlMappings()
+      .then((mappings) => sendResponse({ ok: true, mappings }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
@@ -99,6 +110,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === MESSAGE_TYPES.OPEN_BOOKMARK) {
     openBookmark(message.url, sender.tab?.windowId)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === MESSAGE_TYPES.OPEN_URL) {
+    openUrl(message.url, sender.tab?.windowId)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === MESSAGE_TYPES.OPEN_OPTIONS) {
+    chrome.runtime.openOptionsPage()
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
@@ -161,8 +186,12 @@ async function activateTab(tabId) {
 }
 
 async function openBookmark(url, windowId) {
+  return openUrl(url, windowId);
+}
+
+async function openUrl(url, windowId) {
   if (!isSupportedTabUrl(url)) {
-    throw new Error("Unsupported bookmark URL.");
+    throw new Error("Unsupported URL.");
   }
 
   const createProperties = { url, active: true };
@@ -178,6 +207,25 @@ async function openBookmark(url, windowId) {
   if (Number.isInteger(tab.id)) {
     await chrome.tabs.update(tab.id, { active: true });
   }
+}
+
+async function getUrlMappings() {
+  const values = await chrome.storage.local.get(URL_MAPPINGS_STORAGE_KEY);
+  const mappings = values[URL_MAPPINGS_STORAGE_KEY];
+  if (!Array.isArray(mappings)) {
+    return [];
+  }
+
+  return mappings.filter((mapping) => {
+    return (
+      mapping &&
+      typeof mapping.id === "string" &&
+      typeof mapping.input === "string" &&
+      typeof mapping.url === "string" &&
+      mapping.input.trim() &&
+      isSupportedTabUrl(mapping.url)
+    );
+  });
 }
 
 async function openNewTab(windowId) {

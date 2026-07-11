@@ -10,24 +10,37 @@
     TOGGLE_PANEL: "TOGGLE_PANEL",
     GET_TABS: "GET_TABS",
     GET_BOOKMARKS: "GET_BOOKMARKS",
+    GET_URL_MAPPINGS: "GET_URL_MAPPINGS",
     GET_THEME: "GET_THEME",
     SET_THEME: "SET_THEME",
     NEW_TAB: "NEW_TAB",
     CLOSE_CURRENT_TAB: "CLOSE_CURRENT_TAB",
     RELOAD_CURRENT_TAB: "RELOAD_CURRENT_TAB",
     ACTIVATE_TAB: "ACTIVATE_TAB",
-    OPEN_BOOKMARK: "OPEN_BOOKMARK"
+    OPEN_BOOKMARK: "OPEN_BOOKMARK",
+    OPEN_URL: "OPEN_URL",
+    OPEN_OPTIONS: "OPEN_OPTIONS"
   };
 
   const ITEM_TYPES = {
     TAB: "tab",
     BOOKMARK: "bookmark",
+    URL_MAPPING: "url-mapping",
     COMMAND: "command"
   };
 
   const RECENT_TAB_DISPLAY_LIMIT = 8;
   const pinyinSearch = globalThis.EdgeCommandPanelPinyin;
   const BUILT_IN_COMMANDS = [
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "manage-url-mappings",
+      title: "Settings: Manage URL Mappings",
+      subtitle: "Add, edit, or remove custom input-to-URL mappings",
+      iconText: "↗",
+      action: "open-url-mapping-settings",
+      aliases: "settings url mapping mappings custom shortcut keyword manage 配置 设置 网址 映射 自定义 输入 guanli peizhi shezhi wangzhi yingshe"
+    },
     {
       type: ITEM_TYPES.COMMAND,
       id: "help-built-in-commands",
@@ -91,7 +104,8 @@
     status: null,
     sections: {
       [ITEM_TYPES.TAB]: [],
-      [ITEM_TYPES.BOOKMARK]: []
+      [ITEM_TYPES.BOOKMARK]: [],
+      [ITEM_TYPES.URL_MAPPING]: []
     },
     visibleItems: [],
     selectedIndex: 0,
@@ -128,24 +142,27 @@
     state.input.value = "";
     state.selectedIndex = 0;
     state.input.focus();
-    setStatus("Loading recent tabs and bookmark bar...");
+    setStatus("Loading URL mappings, recent tabs, and bookmark bar...");
     state.list.textContent = "";
 
     try {
-      const [theme, tabs, bookmarks] = await Promise.all([
+      const [theme, tabs, bookmarks, mappings] = await Promise.all([
         requestTheme(),
         requestTabs(),
-        requestBookmarks()
+        requestBookmarks(),
+        requestUrlMappings()
       ]);
       applyTheme(theme);
       state.sections[ITEM_TYPES.TAB] = tabs;
       state.sections[ITEM_TYPES.BOOKMARK] = bookmarks;
+      state.sections[ITEM_TYPES.URL_MAPPING] = mappings;
       applyFilter("");
     } catch (error) {
       state.sections[ITEM_TYPES.TAB] = [];
       state.sections[ITEM_TYPES.BOOKMARK] = [];
+      state.sections[ITEM_TYPES.URL_MAPPING] = [];
       state.visibleItems = [];
-      renderResults({ tabs: [], bookmarks: [], commands: [] });
+      renderResults({ mappings: [], tabs: [], bookmarks: [], commands: [] });
       setStatus(error.message || "Unable to load command panel items.");
     }
   }
@@ -186,11 +203,14 @@
     state.input = document.createElement("input");
     state.input.className = "ecp-input";
     state.input.type = "search";
-    state.input.placeholder = "Search recent tabs, bookmark bar, and commands";
+    state.input.placeholder = "Type a URL mapping, or search tabs, bookmarks, and commands";
     state.input.autocomplete = "off";
     state.input.spellcheck = false;
     state.input.setAttribute("aria-label", "Search recent tabs, bookmark bar, and commands");
-    state.input.addEventListener("input", () => applyFilter(state.input.value));
+    state.input.addEventListener("input", () => {
+      state.selectedIndex = 0;
+      applyFilter(state.input.value);
+    });
     state.input.addEventListener("keydown", handleKeyDown);
 
     state.status = document.createElement("div");
@@ -236,18 +256,60 @@
     return response.theme || "dark";
   }
 
+  async function requestUrlMappings() {
+    const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPES.GET_URL_MAPPINGS });
+    if (!response?.ok) {
+      throw new Error(response?.error || "Unable to load URL mappings.");
+    }
+
+    return (response.mappings || []).map((mapping) => ({
+      ...mapping,
+      type: ITEM_TYPES.URL_MAPPING,
+      title: mapping.input,
+      subtitle: mapping.url,
+      iconText: "↗"
+    }));
+  }
+
   function applyFilter(query) {
     const normalizedQuery = pinyinSearch.normalizeSearchTerm(query);
+    const mappings = filterUrlMappings(normalizedQuery);
     const tabs = filterTabs(normalizedQuery);
     const bookmarks = filterBookmarks(normalizedQuery);
     const commands = filterCommands(normalizedQuery);
 
-    state.visibleItems = [...tabs, ...bookmarks, ...commands];
+    state.visibleItems = [...mappings, ...tabs, ...bookmarks, ...commands];
     if (state.selectedIndex >= state.visibleItems.length) {
       state.selectedIndex = Math.max(0, state.visibleItems.length - 1);
     }
 
-    renderResults({ tabs, bookmarks, commands });
+    renderResults({ mappings, tabs, bookmarks, commands });
+  }
+
+  function filterUrlMappings(normalizedQuery) {
+    if (!normalizedQuery) {
+      return [];
+    }
+
+    return state.sections[ITEM_TYPES.URL_MAPPING]
+      .map((mapping, index) => ({
+        mapping,
+        index,
+        exact: pinyinSearch.normalizeSearchTerm(mapping.input) === normalizedQuery,
+        score: scoreUrlMapping(mapping, normalizedQuery)
+      }))
+      .filter((result) => result.score > 0)
+      .sort((a, b) => Number(b.exact) - Number(a.exact) || b.score - a.score || a.index - b.index)
+      .map((result) => result.mapping);
+  }
+
+  function scoreUrlMapping(mapping, normalizedQuery) {
+    const inputScore = scoreText(getItemFieldSearchText(mapping, "input"), normalizedQuery, 400);
+    if (inputScore > 0) {
+      return inputScore;
+    }
+
+    return scoreText(getItemFieldSearchText(mapping, "url"), normalizedQuery, 100);
   }
 
   function filterItems(items, normalizedQuery) {
@@ -361,6 +423,7 @@
   }
 
   function renderResults({
+    mappings = [],
     tabs = [],
     bookmarks = [],
     commands = [],
@@ -369,6 +432,9 @@
     state.list.textContent = "";
 
     const fragment = document.createDocumentFragment();
+    if (mappings.length > 0) {
+      appendSection(fragment, "URL Mappings", mappings, "");
+    }
     if (includeEmptySections || tabs.length > 0) {
       appendSection(fragment, "Recent Tabs", tabs, "No matching recent tabs");
     }
@@ -381,11 +447,13 @@
     state.list.append(fragment);
     syncSelectedItem();
 
+    const mappingLabel =
+      mappings.length > 0 ? `${mappings.length} URL mapping${mappings.length === 1 ? "" : "s"}, ` : "";
     const tabLabel = `${tabs.length} recent tab${tabs.length === 1 ? "" : "s"}`;
     const bookmarkLabel = `${bookmarks.length} bookmark${bookmarks.length === 1 ? "" : "s"}`;
     const commandLabel =
       commands.length > 0 ? `, ${commands.length} command${commands.length === 1 ? "" : "s"}` : "";
-    setStatus(`${tabLabel}, ${bookmarkLabel}${commandLabel}`);
+    setStatus(`${mappingLabel}${tabLabel}, ${bookmarkLabel}${commandLabel}`);
   }
 
   function appendSection(fragment, title, items, emptyText) {
@@ -458,7 +526,7 @@
     const url = document.createElement("span");
     url.className = "ecp-url";
     url.textContent =
-      item.type === ITEM_TYPES.COMMAND
+      item.type === ITEM_TYPES.COMMAND || item.type === ITEM_TYPES.URL_MAPPING
         ? item.subtitle
         :
       item.type === ITEM_TYPES.BOOKMARK && item.path
@@ -536,7 +604,9 @@
         ? await activateTab(item)
         : item.type === ITEM_TYPES.BOOKMARK
           ? await openBookmark(item)
-          : await runCommand(item);
+          : item.type === ITEM_TYPES.URL_MAPPING
+            ? await openUrlMapping(item)
+            : await runCommand(item);
     if (!response?.ok) {
       setStatus(response?.error || "Unable to open item.");
       return;
@@ -575,6 +645,18 @@
     });
   }
 
+  async function openUrlMapping(mapping) {
+    if (!mapping?.url) {
+      return { ok: false, error: "Invalid URL mapping." };
+    }
+
+    setStatus(`Opening ${mapping.input}...`);
+    return chrome.runtime.sendMessage({
+      type: MESSAGE_TYPES.OPEN_URL,
+      url: mapping.url
+    });
+  }
+
   async function runCommand(command) {
     if (!command) {
       return { ok: false, error: "Invalid command." };
@@ -598,6 +680,11 @@
     if (command.action === "show-built-in-commands") {
       showBuiltInCommands();
       return { ok: true, keepOpen: true };
+    }
+
+    if (command.action === "open-url-mapping-settings") {
+      setStatus("Opening URL mapping settings...");
+      return chrome.runtime.sendMessage({ type: MESSAGE_TYPES.OPEN_OPTIONS });
     }
 
     if (!command.theme) {
@@ -630,6 +717,7 @@
     state.selectedIndex = 0;
     state.visibleItems = [...BUILT_IN_COMMANDS];
     renderResults({
+      mappings: [],
       tabs: [],
       bookmarks: [],
       commands: BUILT_IN_COMMANDS,
