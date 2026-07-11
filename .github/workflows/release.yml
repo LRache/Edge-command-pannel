@@ -1,0 +1,66 @@
+name: Build and release extension
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish pre-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and build
+        run: npm run build
+
+      - name: Package extension
+        id: package
+        shell: bash
+        run: |
+          version="$(node --print "require('./manifest.json').version")"
+          short_sha="${GITHUB_SHA::7}"
+          build_id="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          archive="edge-command-panel-v${version}-build.${build_id}-${short_sha}.zip"
+          tag="v${version}-build.${build_id}"
+
+          (cd dist && zip -r "../${archive}" .)
+          unzip -t "${archive}"
+
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "title=Edge Command Panel v${version} (build ${build_id})" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          RELEASE_TAG: ${{ steps.package.outputs.tag }}
+          RELEASE_TITLE: ${{ steps.package.outputs.title }}
+        run: |
+          gh release create "$RELEASE_TAG" "$ARCHIVE" \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TITLE" \
+            --notes "Automated extension build from commit ${GITHUB_SHA} on main." \
+            --prerelease

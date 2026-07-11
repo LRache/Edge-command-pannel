@@ -1,0 +1,20 @@
+{
+  "name": "edge-command-panel",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && node scripts/build.mjs",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.11",
+    "marked": "^18.0.6",
+    "openai": "^6.46.0"
+  }
+}
