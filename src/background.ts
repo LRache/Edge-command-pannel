@@ -11,7 +11,12 @@ import {
 import { AI_SETTINGS_STORAGE_KEY, normalizeAiSettings } from "./ai-settings";
 import { requestPageAnswer } from "./ai-client";
 import UPDATE_TRACKED_FILES from "../config/update-tracked-files.json";
-import { normalizeUrlMappings, URL_MAPPINGS_STORAGE_KEY, type UrlMapping } from "./url-mappings";
+import {
+  normalizeMappingUrl,
+  normalizeUrlMappings,
+  URL_MAPPINGS_STORAGE_KEY,
+  type UrlMapping
+} from "./url-mappings";
 
 const DEFAULT_THEME: Theme = "dark";
 const THEME_STORAGE_KEY = "commandPanelTheme";
@@ -106,6 +111,8 @@ async function handleMessage(
       return { ok: true, bookmarks: await getBookmarkBarItems() };
     case MESSAGE_TYPES.GET_URL_MAPPINGS:
       return { ok: true, mappings: await getUrlMappings() };
+    case MESSAGE_TYPES.SAVE_URL_MAPPING:
+      return { ok: true, mapping: await saveUrlMapping(message.input, message.url) };
     case MESSAGE_TYPES.GET_THEME:
       return { ok: true, theme: await getTheme() };
     case MESSAGE_TYPES.GET_UPDATE_STATUS:
@@ -204,6 +211,28 @@ async function getBookmarkBarItems(): Promise<PanelBookmark[]> {
 async function getUrlMappings(): Promise<UrlMapping[]> {
   const values = await chrome.storage.local.get(URL_MAPPINGS_STORAGE_KEY);
   return normalizeUrlMappings(values[URL_MAPPINGS_STORAGE_KEY]);
+}
+
+async function saveUrlMapping(rawInput: string, rawUrl: string): Promise<UrlMapping> {
+  const input = rawInput.trim();
+  const url = normalizeMappingUrl(rawUrl);
+  if (!input || input.length > 80) {
+    throw new Error("Mapping name must contain 1 to 80 characters.");
+  }
+  if (!url) {
+    throw new Error("Enter a valid http:// or https:// URL.");
+  }
+
+  const mappings = await getUrlMappings();
+  if (mappings.some((mapping) => mapping.input.toLocaleLowerCase() === input.toLocaleLowerCase())) {
+    throw new Error(`“${input}” already has a mapping.`);
+  }
+
+  const mapping = { id: crypto.randomUUID(), input, url };
+  await chrome.storage.local.set({
+    [URL_MAPPINGS_STORAGE_KEY]: [...mappings, mapping]
+  });
+  return mapping;
 }
 
 async function activateTab(tabId: number | undefined): Promise<void> {

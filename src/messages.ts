@@ -4,6 +4,7 @@ export const MESSAGE_TYPES = {
   GET_TABS: "GET_TABS",
   GET_BOOKMARKS: "GET_BOOKMARKS",
   GET_URL_MAPPINGS: "GET_URL_MAPPINGS",
+  SAVE_URL_MAPPING: "SAVE_URL_MAPPING",
   GET_THEME: "GET_THEME",
   GET_UPDATE_STATUS: "GET_UPDATE_STATUS",
   SET_THEME: "SET_THEME",
@@ -60,6 +61,7 @@ export type PanelRequest =
   | { type: typeof MESSAGE_TYPES.GET_TABS }
   | { type: typeof MESSAGE_TYPES.GET_BOOKMARKS }
   | { type: typeof MESSAGE_TYPES.GET_URL_MAPPINGS }
+  | { type: typeof MESSAGE_TYPES.SAVE_URL_MAPPING; input: string; url: string }
   | { type: typeof MESSAGE_TYPES.GET_THEME }
   | { type: typeof MESSAGE_TYPES.GET_UPDATE_STATUS }
   | { type: typeof MESSAGE_TYPES.SET_THEME; theme: Theme }
@@ -83,6 +85,13 @@ export function isPanelRequest(value: unknown): value is PanelRequest {
   }
 
   switch (value.type) {
+    case MESSAGE_TYPES.SAVE_URL_MAPPING:
+      return (
+        typeof value.input === "string" &&
+        value.input.length <= 80 &&
+        typeof value.url === "string" &&
+        value.url.length <= 4_000
+      );
     case MESSAGE_TYPES.SET_THEME:
       return value.theme === "light" || value.theme === "dark";
     case MESSAGE_TYPES.NAVIGATE_CURRENT_TAB:

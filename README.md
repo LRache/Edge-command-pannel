@@ -33,7 +33,7 @@ Every push to `main` runs the GitHub Actions workflow in `.github/workflows/rele
 - Enter an `http://`, `https://`, `edge://`, or `chrome://` URL, or a bare domain such as `example.com/path`, to show a bottom action that navigates the current tab directly to that URL (for example, `edge://extensions` or `chrome://extensions`).
 - The extension checks the latest published GitHub release (including pre-releases) every six hours. When local extension files differ from that release, the toolbar icon shows an `UP` badge and the command panel shows an update item linking to the release.
 - Type `help`, `帮助`, `内置命令`, or related pinyin to show all built-in commands.
-- Type `mapping`, `映射`, or `设置` and run **Settings: Manage URL Mappings** to add, edit, or delete custom input-to-URL shortcuts. You can also open the extension's **Options** page from `edge://extensions`.
+- Type `mapping`, `映射`, or `设置` and run **Mapping: Add URL Mapping**. Enter the mapping name and press `Enter`, then type a URL or choose one from recent tabs or bookmarks. The entire flow stays inside the command panel.
 - A custom mapping is shown above other result types. An exact input match ranks first, so pressing `Enter` opens its URL in a new active tab.
 - Press `ArrowDown` or `ArrowUp` to move through results.
 - Press `Enter` to activate the selected tab, open the selected bookmark, run a command, or navigate to the entered URL.

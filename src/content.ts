@@ -38,9 +38,9 @@ type CommandAction =
   | "open-update-page"
   | "ask-current-page"
   | "open-ai-settings"
-  | "open-url-mapping-settings";
+  | "create-url-mapping";
 
-type PanelMode = "search" | "ask";
+type PanelMode = "search" | "ask" | "mapping-name" | "mapping-url";
 
 interface TabItem extends PanelTab {
   type: typeof ITEM_TYPES.TAB;
@@ -97,6 +97,7 @@ interface PanelState {
   asking: boolean;
   askRequestId: number;
   pageContext: PageContext | null;
+  pendingMappingName: string;
 }
 
 interface RenderOptions {
@@ -130,12 +131,12 @@ interface RenderOptions {
     },
     {
       type: ITEM_TYPES.COMMAND,
-      id: "manage-url-mappings",
-      title: "Settings: Manage URL Mappings",
-      subtitle: "Add, edit, or remove custom input-to-URL mappings",
+      id: "create-url-mapping",
+      title: "Mapping: Add URL Mapping",
+      subtitle: "Enter a name and URL without leaving the command panel",
       iconText: "↗",
-      action: "open-url-mapping-settings",
-      aliases: "settings url mapping mappings custom shortcut keyword manage 配置 设置 网址 映射 自定义 输入 guanli peizhi shezhi wangzhi yingshe"
+      action: "create-url-mapping",
+      aliases: "add create url mapping mappings custom shortcut keyword 配置 设置 新增 添加 网址 映射 自定义 输入 peizhi shezhi xinzeng tianjia wangzhi yingshe"
     },
     {
       type: ITEM_TYPES.COMMAND,
@@ -230,7 +231,8 @@ interface RenderOptions {
     mode: "search",
     asking: false,
     askRequestId: 0,
-    pageContext: null
+    pageContext: null,
+    pendingMappingName: ""
   };
 
   const searchTextCache = new WeakMap<PanelItem, Map<SearchableField, string>>();
@@ -269,6 +271,7 @@ interface RenderOptions {
     state.mode = "search";
     state.asking = false;
     state.pageContext = null;
+    state.pendingMappingName = "";
     state.askRequestId += 1;
     elements.input.value = "";
     configureInputForMode();
@@ -352,6 +355,9 @@ interface RenderOptions {
       if (state.mode === "search") {
         state.selectedIndex = 0;
         applyFilter(input.value);
+      } else if (state.mode === "mapping-url") {
+        state.selectedIndex = 0;
+        renderMappingUrlChoices(input.value);
       }
     });
     input.addEventListener("keydown", handleKeyDown);
@@ -411,13 +417,17 @@ interface RenderOptions {
       throw new Error(response?.error || "Unable to load URL mappings.");
     }
 
-    return (response.mappings || []).map((mapping) => ({
+    return (response.mappings || []).map(toUrlMappingItem);
+  }
+
+  function toUrlMappingItem(mapping: UrlMapping): UrlMappingItem {
+    return {
       ...mapping,
       type: ITEM_TYPES.URL_MAPPING,
       title: mapping.input,
       subtitle: mapping.url,
       iconText: "↗"
-    }));
+    };
   }
 
   async function refreshUpdateStatus(): Promise<void> {
@@ -892,6 +902,42 @@ interface RenderOptions {
   }
 
   function handleKeyDown(event: KeyboardEvent): void {
+    if (state.mode === "mapping-name" || state.mode === "mapping-url") {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (state.mode === "mapping-url") {
+          returnToMappingNameStep();
+        } else {
+          exitMappingMode();
+        }
+        return;
+      }
+      if (state.mode === "mapping-url" && event.key === "ArrowDown") {
+        event.preventDefault();
+        moveSelection(1);
+        return;
+      }
+      if (state.mode === "mapping-url" && event.key === "ArrowUp") {
+        event.preventDefault();
+        moveSelection(-1);
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (state.mode === "mapping-name") {
+          submitMappingName(ensurePanel().input.value);
+        } else {
+          const selectedItem = state.visibleItems[state.selectedIndex];
+          const selectedUrl =
+            selectedItem?.type === ITEM_TYPES.TAB || selectedItem?.type === ITEM_TYPES.BOOKMARK
+              ? selectedItem.url
+              : ensurePanel().input.value;
+          void submitMappingUrl(selectedUrl);
+        }
+      }
+      return;
+    }
+
     if (state.mode === "ask") {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -947,6 +993,14 @@ interface RenderOptions {
   async function selectItem(index: number): Promise<void> {
     const item = state.visibleItems[index];
     if (!item) {
+      return;
+    }
+
+    if (
+      state.mode === "mapping-url" &&
+      (item.type === ITEM_TYPES.TAB || item.type === ITEM_TYPES.BOOKMARK)
+    ) {
+      await submitMappingUrl(item.url);
       return;
     }
 
@@ -1064,9 +1118,9 @@ interface RenderOptions {
       return response.ok ? { ok: true, keepOpen: true } : response;
     }
 
-    if (command.action === "open-url-mapping-settings") {
-      const response = await sendMessage({ type: MESSAGE_TYPES.OPEN_AI_SETTINGS });
-      return response.ok ? { ok: true, keepOpen: true } : response;
+    if (command.action === "create-url-mapping") {
+      enterMappingMode();
+      return { ok: true, keepOpen: true };
     }
 
     if (!command.theme) {
@@ -1085,6 +1139,153 @@ interface RenderOptions {
     }
 
     return response;
+  }
+
+  function enterMappingMode(): void {
+    state.mode = "mapping-name";
+    state.pendingMappingName = "";
+    state.visibleItems = [];
+    state.selectedIndex = 0;
+
+    const input = ensurePanel().input;
+    input.value = "";
+    configureInputForMode();
+    renderMappingStep();
+    setStatus("URL Mapping · Step 1 of 2");
+    input.focus();
+  }
+
+  function submitMappingName(rawName: string): void {
+    const name = rawName.trim();
+    if (!name || name.length > 80) {
+      setStatus("Enter a mapping name containing 1 to 80 characters.");
+      return;
+    }
+    if (
+      state.sections[ITEM_TYPES.URL_MAPPING].some(
+        (mapping) => mapping.input.toLocaleLowerCase() === name.toLocaleLowerCase()
+      )
+    ) {
+      setStatus(`“${name}” already has a mapping.`);
+      return;
+    }
+
+    state.pendingMappingName = name;
+    state.mode = "mapping-url";
+    const input = ensurePanel().input;
+    input.value = "";
+    configureInputForMode();
+    renderMappingUrlChoices("");
+    input.focus();
+  }
+
+  async function submitMappingUrl(rawUrl: string): Promise<void> {
+    const input = ensurePanel().input;
+    if (!rawUrl.trim()) {
+      setStatus("Enter the URL for this mapping.");
+      return;
+    }
+
+    input.disabled = true;
+    setStatus("Saving URL mapping...");
+    let response: MessageResponse<{ mapping: UrlMapping }>;
+    try {
+      response = await sendMessage<{ mapping: UrlMapping }>({
+        type: MESSAGE_TYPES.SAVE_URL_MAPPING,
+        input: state.pendingMappingName,
+        url: rawUrl
+      });
+    } catch (error) {
+      input.disabled = false;
+      setStatus(getErrorMessage(error, "Unable to save URL mapping."));
+      input.focus();
+      return;
+    }
+
+    if (!response.ok) {
+      input.disabled = false;
+      setStatus(response.error);
+      input.focus();
+      return;
+    }
+
+    const mapping = toUrlMappingItem(response.mapping);
+    state.sections[ITEM_TYPES.URL_MAPPING] = [
+      ...state.sections[ITEM_TYPES.URL_MAPPING],
+      mapping
+    ];
+    state.mode = "search";
+    state.pendingMappingName = "";
+    state.selectedIndex = 0;
+    input.disabled = false;
+    input.value = mapping.input;
+    configureInputForMode();
+    applyFilter(mapping.input);
+    setStatus(`Saved “${mapping.input}” → ${mapping.url}`);
+    input.focus();
+  }
+
+  function returnToMappingNameStep(): void {
+    state.mode = "mapping-name";
+    state.visibleItems = [];
+    state.selectedIndex = 0;
+    const input = ensurePanel().input;
+    input.value = state.pendingMappingName;
+    configureInputForMode();
+    renderMappingStep();
+    setStatus("URL Mapping · Step 1 of 2");
+    input.focus();
+    input.select();
+  }
+
+  function exitMappingMode(): void {
+    state.mode = "search";
+    state.pendingMappingName = "";
+    const input = ensurePanel().input;
+    input.value = "";
+    configureInputForMode();
+    state.selectedIndex = 0;
+    applyFilter("");
+    input.focus();
+  }
+
+  function renderMappingStep(): void {
+    const list = ensurePanel().list;
+    list.textContent = "";
+
+    const container = document.createElement("section");
+    container.className = "ecp-ask ecp-ask-intro";
+    const heading = document.createElement("div");
+    heading.className = "ecp-section-title";
+    const body = document.createElement("div");
+    body.className = "ecp-ask-content";
+
+    if (state.mode === "mapping-name") {
+      heading.textContent = "Add URL Mapping · Step 1 of 2";
+      body.textContent = "Enter a short name or keyword, then press Enter. Press Escape to cancel.";
+    }
+
+    container.append(heading, body);
+    list.append(container);
+  }
+
+  function renderMappingUrlChoices(query: string): void {
+    const queryTerms = pinyinSearch.normalizeSearchTerms(query);
+    const bookmarks = filterBookmarks(queryTerms);
+    const tabs = filterTabs(queryTerms, bookmarks);
+    state.visibleItems = [...tabs, ...bookmarks];
+    if (state.selectedIndex >= state.visibleItems.length) {
+      state.selectedIndex = Math.max(0, state.visibleItems.length - 1);
+    }
+
+    renderResults({
+      tabs,
+      bookmarks,
+      includeEmptySections: true
+    });
+    setStatus(
+      `URL Mapping · Step 2 of 2 · Type a URL or choose a tab/bookmark for “${state.pendingMappingName}”`
+    );
   }
 
   function enterAskMode(): void {
@@ -1229,12 +1430,22 @@ interface RenderOptions {
   function configureInputForMode(): void {
     const input = ensurePanel().input;
     const isAskMode = state.mode === "ask";
-    input.placeholder = isAskMode
-      ? "Ask a question about the current page"
-      : "Type a URL mapping, or search tabs, bookmarks, and commands";
+    if (isAskMode) {
+      input.placeholder = "Ask a question about the current page";
+    } else if (state.mode === "mapping-name") {
+      input.placeholder = "Mapping name, for example: mail";
+    } else if (state.mode === "mapping-url") {
+      input.placeholder = "URL, for example: https://outlook.office.com";
+    } else {
+      input.placeholder = "Type a URL mapping, or search tabs, bookmarks, and commands";
+    }
     input.setAttribute("aria-label", input.placeholder);
     if (isAskMode) {
       input.maxLength = MAX_ASK_QUESTION_LENGTH;
+    } else if (state.mode === "mapping-name") {
+      input.maxLength = 80;
+    } else if (state.mode === "mapping-url") {
+      input.maxLength = 4_000;
     } else {
       input.removeAttribute("maxlength");
     }
