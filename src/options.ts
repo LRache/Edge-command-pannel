@@ -54,7 +54,7 @@ async function saveSettings(): Promise<void> {
     }
 
     const originPattern = getOriginPattern(settings.baseUrl);
-    const granted = await extensionApi.permissions.request({ origins: [originPattern] });
+    const granted = await ensureOriginPermission(originPattern);
     if (!granted) {
       throw new Error(`Permission to connect to ${new URL(settings.baseUrl).origin} was not granted.`);
     }
@@ -104,6 +104,9 @@ async function removeUnusedOriginPermission(
   if (previousOrigin === nextOrigin) {
     return true;
   }
+  if (isRequiredOriginPermission(previousOrigin)) {
+    return true;
+  }
 
   try {
     const hasPreviousPermission = await extensionApi.permissions.contains({ origins: [previousOrigin] });
@@ -115,6 +118,80 @@ async function removeUnusedOriginPermission(
   } catch {
     return false;
   }
+}
+
+async function ensureOriginPermission(originPattern: string): Promise<boolean> {
+  if (await extensionApi.permissions.contains({ origins: [originPattern] })) {
+    return true;
+  }
+
+  return await extensionApi.permissions.request({ origins: [originPattern] });
+}
+
+function isRequiredOriginPermission(originPattern: string): boolean {
+  const manifest = extensionApi.runtime.getManifest() as chrome.runtime.Manifest & {
+    host_permissions?: string[];
+    permissions?: string[];
+  };
+  const requiredOriginPatterns = [
+    ...(manifest.host_permissions || []),
+    ...(manifest.permissions || []).filter(isOriginMatchPattern)
+  ];
+
+  return requiredOriginPatterns.some((requiredPattern) =>
+    doesPermissionPatternCoverOrigin(requiredPattern, originPattern)
+  );
+}
+
+function doesPermissionPatternCoverOrigin(requiredPattern: string, originPattern: string): boolean {
+  if (requiredPattern === "<all_urls>") {
+    return true;
+  }
+
+  const required = parseOriginMatchPattern(requiredPattern);
+  const origin = parseOriginMatchPattern(originPattern);
+  if (!required || !origin) {
+    return requiredPattern === originPattern;
+  }
+
+  return (
+    doesSchemeMatch(required.scheme, origin.scheme) &&
+    doesHostMatch(required.host, origin.host)
+  );
+}
+
+function parseOriginMatchPattern(pattern: string): { scheme: string; host: string } | null {
+  const match = /^(\*|http|https):\/\/([^/]+)\//.exec(pattern);
+  if (!match) {
+    return null;
+  }
+
+  const [, scheme, host] = match;
+  if (!scheme || !host) {
+    return null;
+  }
+
+  return { scheme, host };
+}
+
+function doesSchemeMatch(requiredScheme: string, originScheme: string): boolean {
+  return requiredScheme === "*" || requiredScheme === originScheme;
+}
+
+function doesHostMatch(requiredHost: string, originHost: string): boolean {
+  if (requiredHost === "*") {
+    return true;
+  }
+  if (requiredHost.startsWith("*.")) {
+    const baseHost = requiredHost.slice(2);
+    return originHost === baseHost || originHost.endsWith(`.${baseHost}`);
+  }
+
+  return requiredHost === originHost;
+}
+
+function isOriginMatchPattern(permission: string): boolean {
+  return permission === "<all_urls>" || /^(\*|http|https):\/\/[^/]+\//.test(permission);
 }
 
 function setStatus(message: string, kind: "normal" | "success" | "error"): void {

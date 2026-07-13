@@ -41,14 +41,18 @@ await Promise.all(
 if (targetBrowser === "firefox") {
   const manifestPath = resolve(outputDirectory, "manifest.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const contentScriptMatches = (manifest.content_scripts ?? []).flatMap(
+    (contentScript) => contentScript.matches ?? []
+  );
   manifest.name = "Edge Command Panel";
   manifest.manifest_version = 2;
-  manifest.permissions = [
+  manifest.permissions = unique([
     ...manifest.permissions.filter(
       (permission) => permission !== "favicon" && permission !== "scripting"
     ),
-    ...manifest.host_permissions
-  ];
+    ...manifest.host_permissions,
+    ...contentScriptMatches
+  ]);
   manifest.background = {
     scripts: ["src/background.js"],
     persistent: false
@@ -62,6 +66,11 @@ if (targetBrowser === "firefox") {
   };
   delete manifest.action;
   delete manifest.host_permissions;
+  delete manifest.optional_host_permissions;
   delete manifest.web_accessible_resources;
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+function unique(values) {
+  return [...new Set(values)];
 }

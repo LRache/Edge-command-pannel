@@ -570,7 +570,9 @@ function findBookmarkBar(
   tree: chrome.bookmarks.BookmarkTreeNode[]
 ): chrome.bookmarks.BookmarkTreeNode | undefined {
   const rootChildren = tree[0]?.children || [];
-  return rootChildren.find((node) => node.id === "1") || rootChildren[0];
+  return (
+    rootChildren.find((node) => node.id === "1" || node.id === "toolbar_____") || rootChildren[0]
+  );
 }
 
 function getFaviconUrl(pageUrl: string): string {

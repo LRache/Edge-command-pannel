@@ -4,7 +4,8 @@
   "description": "Open a VS Code-like command panel to search recent tabs and bookmark bar items.",
   "version": "0.2.1",
   "permissions": ["tabs", "scripting", "bookmarks", "favicon", "storage", "alarms"],
-  "host_permissions": ["http://*/*", "https://*/*", "https://api.github.com/*"],
+  "host_permissions": ["https://api.github.com/*"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
   "action": {
     "default_title": "Open tab command panel"
   },
