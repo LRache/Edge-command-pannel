@@ -3,39 +3,68 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Edge Command Panel · AI Settings</title>
+    <title>Edge Command Panel · Settings</title>
     <link rel="stylesheet" href="options.css">
   </head>
   <body>
     <main>
       <header>
         <p class="eyebrow">Edge Command Panel</p>
-        <h1>AI Settings</h1>
+        <h1>Settings</h1>
         <p class="description">
-          Configure an OpenAI-compatible service for the <code>ask</code> command.
+          Configure AI access and custom command-panel URL shortcuts.
         </p>
       </header>
 
-      <form id="ai-settings-form">
-        <label for="base-url">API base URL</label>
-        <input id="base-url" name="base-url" type="url" required spellcheck="false">
-        <p class="hint">HTTPS is required, except for localhost development servers.</p>
+      <section class="settings-section" aria-labelledby="ai-settings-title">
+        <h2 id="ai-settings-title">AI provider</h2>
+        <p class="section-description">Configure an OpenAI-compatible service for the <code>ask</code> command.</p>
+        <form id="ai-settings-form">
+          <label for="base-url">API base URL</label>
+          <input id="base-url" name="base-url" type="url" required spellcheck="false">
+          <p class="hint">HTTPS is required, except for localhost development servers.</p>
 
-        <label for="model">Model</label>
-        <input id="model" name="model" type="text" required spellcheck="false">
+          <label for="model">Model</label>
+          <input id="model" name="model" type="text" required spellcheck="false">
 
-        <label for="api-key">API key</label>
-        <input id="api-key" name="api-key" type="password" required autocomplete="off" spellcheck="false">
-        <p class="hint">
-          The key is stored in this browser profile. Page text is sent only when you submit an
-          <code>ask</code> question.
-        </p>
+          <label for="api-key">API key</label>
+          <input id="api-key" name="api-key" type="password" required autocomplete="off" spellcheck="false">
+          <p class="hint">
+            The key is stored in this browser profile. Page text is sent only when you submit an
+            <code>ask</code> question.
+          </p>
 
-        <div class="actions">
-          <button id="save" type="submit">Save settings</button>
-          <div id="status" role="status" aria-live="polite"></div>
+          <div class="actions">
+            <button id="save" type="submit">Save AI settings</button>
+            <div id="status" role="status" aria-live="polite"></div>
+          </div>
+        </form>
+      </section>
+
+      <section class="settings-section" aria-labelledby="url-mappings-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="url-mappings-title">Custom URL mappings</h2>
+            <p class="section-description">Map a short input such as <code>mail</code> to a URL, then type it in the command panel and press Enter.</p>
+          </div>
+          <span id="mapping-count"></span>
         </div>
-      </form>
+
+        <form id="mapping-form" class="mapping-form">
+          <input id="mapping-id" type="hidden">
+          <label for="mapping-input">Input</label>
+          <input id="mapping-input" required maxlength="80" placeholder="mail" autocomplete="off">
+          <label for="mapping-url">URL</label>
+          <input id="mapping-url" required placeholder="https://outlook.office.com" inputmode="url" autocomplete="url">
+          <div class="actions">
+            <button id="mapping-save" type="submit">Add mapping</button>
+            <button id="mapping-cancel" class="secondary" type="button" hidden>Cancel</button>
+            <div id="mapping-status" role="status" aria-live="polite"></div>
+          </div>
+        </form>
+
+        <div id="mapping-list" class="mapping-list"></div>
+      </section>
     </main>
     <script src="options.js"></script>
   </body>

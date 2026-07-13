@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Edge Command Panel",
-  "description": "Open a VS Code-like command panel to search recent tabs and bookmark bar items.",
+  "description": "Open a VS Code-like command panel to search tabs, bookmarks, commands, and custom URL mappings.",
   "version": "0.2.1",
   "permissions": ["tabs", "scripting", "bookmarks", "favicon", "storage", "alarms"],
   "host_permissions": ["https://api.github.com/*"],
