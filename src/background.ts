@@ -237,7 +237,7 @@ async function getBookmarkBarItems(): Promise<PanelBookmark[]> {
 }
 
 async function getUrlMappings(): Promise<UrlMapping[]> {
-  const values = await chrome.storage.local.get(URL_MAPPINGS_STORAGE_KEY);
+  const values = await extensionApi.storage.local.get(URL_MAPPINGS_STORAGE_KEY);
   return normalizeUrlMappings(values[URL_MAPPINGS_STORAGE_KEY]);
 }
 
@@ -257,7 +257,7 @@ async function saveUrlMapping(rawInput: string, rawUrl: string): Promise<UrlMapp
   }
 
   const mapping = { id: crypto.randomUUID(), input, url };
-  await chrome.storage.local.set({
+  await extensionApi.storage.local.set({
     [URL_MAPPINGS_STORAGE_KEY]: [...mappings, mapping]
   });
   return mapping;

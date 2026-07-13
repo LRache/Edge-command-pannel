@@ -101,7 +101,7 @@ async function saveSettings(): Promise<void> {
 }
 
 async function loadMappings(): Promise<void> {
-  const values = await chrome.storage.local.get(URL_MAPPINGS_STORAGE_KEY);
+  const values = await extensionApi.storage.local.get(URL_MAPPINGS_STORAGE_KEY);
   mappings = normalizeUrlMappings(values[URL_MAPPINGS_STORAGE_KEY]);
   renderMappings();
 }
@@ -136,7 +136,7 @@ async function saveMapping(): Promise<void> {
     mappings = [...mappings, { id: crypto.randomUUID(), input, url }];
   }
 
-  await chrome.storage.local.set({ [URL_MAPPINGS_STORAGE_KEY]: mappings });
+  await extensionApi.storage.local.set({ [URL_MAPPINGS_STORAGE_KEY]: mappings });
   renderMappings();
   resetMappingForm();
   setMappingStatus(editingId ? "Mapping updated." : "Mapping added.", "success");
@@ -200,7 +200,7 @@ function editMapping(mapping: UrlMapping): void {
 
 async function deleteMapping(id: string): Promise<void> {
   mappings = mappings.filter((mapping) => mapping.id !== id);
-  await chrome.storage.local.set({ [URL_MAPPINGS_STORAGE_KEY]: mappings });
+  await extensionApi.storage.local.set({ [URL_MAPPINGS_STORAGE_KEY]: mappings });
   if (mappingIdInput.value === id) {
     resetMappingForm();
   }
