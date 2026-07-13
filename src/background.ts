@@ -183,7 +183,7 @@ async function ensurePanelInjected(tabId: number): Promise<void> {
 }
 
 async function insertPanelFiles(tabId: number): Promise<void> {
-  if (extensionApi.scripting) {
+  if (hasScriptingPermission() && extensionApi.scripting) {
     await extensionApi.scripting.insertCSS({
       target: { tabId },
       files: ["src/panel.css"]
@@ -199,6 +199,10 @@ async function insertPanelFiles(tabId: number): Promise<void> {
   await tabsApi.insertCSS(tabId, { file: "src/panel.css" });
   await tabsApi.executeScript(tabId, { file: "src/vendor/pinyin-pro.js" });
   await tabsApi.executeScript(tabId, { file: "src/content.js" });
+}
+
+function hasScriptingPermission(): boolean {
+  return extensionApi.runtime.getManifest().permissions?.includes("scripting") ?? false;
 }
 
 async function getCurrentWindowTabs(windowId?: number): Promise<PanelTab[]> {

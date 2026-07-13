@@ -121,7 +121,7 @@ async function removeUnusedOriginPermission(
 }
 
 async function ensureOriginPermission(originPattern: string): Promise<boolean> {
-  if (await extensionApi.permissions.contains({ origins: [originPattern] })) {
+  if (isRequiredOriginPermission(originPattern)) {
     return true;
   }
 
