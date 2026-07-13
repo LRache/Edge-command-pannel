@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && node scripts/build.mjs",
+    "build:firefox": "tsc --noEmit && BROWSER=firefox node scripts/build.mjs",
     "check": "tsc --noEmit"
   },
   "devDependencies": {

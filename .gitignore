@@ -15,6 +15,7 @@
 # production
 /build
 /dist
+/dist-firefox
 
 # misc
 .DS_Store
