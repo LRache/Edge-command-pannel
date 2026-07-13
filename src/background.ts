@@ -63,6 +63,7 @@ interface TabInjectionApi {
 
 let updateCheckPromise: Promise<ReleaseUpdateStatus> | null = null;
 let localBlobShasPromise: Promise<Map<string, string>> | null = null;
+let urlMappingMutationQueue: Promise<void> = Promise.resolve();
 
 extensionApi.commands.onCommand.addListener(async (command, tab) => {
   if (command !== "toggle-command-panel") {
@@ -129,6 +130,20 @@ async function handleMessage(
       return { ok: true, mappings: await getUrlMappings() };
     case MESSAGE_TYPES.SAVE_URL_MAPPING:
       return { ok: true, mapping: await saveUrlMapping(message.input, message.url) };
+    case MESSAGE_TYPES.UPDATE_URL_MAPPING:
+      return {
+        ok: true,
+        mapping: await updateUrlMapping(
+          message.id,
+          message.input,
+          message.url,
+          message.expectedInput,
+          message.expectedUrl
+        )
+      };
+    case MESSAGE_TYPES.DELETE_URL_MAPPING:
+      await deleteUrlMapping(message.id, message.expectedInput, message.expectedUrl);
+      break;
     case MESSAGE_TYPES.GET_THEME:
       return { ok: true, theme: await getTheme() };
     case MESSAGE_TYPES.GET_UPDATE_STATUS:
@@ -242,6 +257,71 @@ async function getUrlMappings(): Promise<UrlMapping[]> {
 }
 
 async function saveUrlMapping(rawInput: string, rawUrl: string): Promise<UrlMapping> {
+  const values = validateUrlMappingValues(rawInput, rawUrl);
+  return mutateUrlMappings((mappings) => {
+    assertUniqueUrlMappingInput(mappings, values.input);
+    const mapping = { id: crypto.randomUUID(), ...values };
+    return { mappings: [...mappings, mapping], result: mapping };
+  });
+}
+
+async function updateUrlMapping(
+  id: string,
+  rawInput: string,
+  rawUrl: string,
+  rawExpectedInput: string,
+  rawExpectedUrl: string
+): Promise<UrlMapping> {
+  const values = validateUrlMappingValues(rawInput, rawUrl);
+  const expectedValues = validateUrlMappingValues(rawExpectedInput, rawExpectedUrl);
+  return mutateUrlMappings((mappings) => {
+    const existingMapping = mappings.find((mapping) => mapping.id === id);
+    if (!existingMapping) {
+      throw new Error("This mapping no longer exists. Refresh Settings and try again.");
+    }
+    assertUrlMappingUnchanged(existingMapping, expectedValues);
+
+    assertUniqueUrlMappingInput(mappings, values.input, id);
+    const mapping = { id, ...values };
+    return {
+      mappings: mappings.map((item) => item.id === id ? mapping : item),
+      result: mapping
+    };
+  });
+}
+
+async function deleteUrlMapping(
+  id: string,
+  rawExpectedInput: string,
+  rawExpectedUrl: string
+): Promise<void> {
+  const expectedValues = validateUrlMappingValues(rawExpectedInput, rawExpectedUrl);
+  await mutateUrlMappings((mappings) => {
+    const existingMapping = mappings.find((mapping) => mapping.id === id);
+    if (!existingMapping) {
+      throw new Error("This mapping no longer exists.");
+    }
+    assertUrlMappingUnchanged(existingMapping, expectedValues);
+
+    return {
+      mappings: mappings.filter((mapping) => mapping.id !== id),
+      result: undefined
+    };
+  });
+}
+
+function assertUrlMappingUnchanged(
+  mapping: UrlMapping,
+  expectedValues: Omit<UrlMapping, "id">
+): void {
+  if (mapping.input !== expectedValues.input || mapping.url !== expectedValues.url) {
+    throw new Error(
+      "This mapping changed in another Settings page. Review the latest values and try again."
+    );
+  }
+}
+
+function validateUrlMappingValues(rawInput: string, rawUrl: string): Omit<UrlMapping, "id"> {
   const input = rawInput.trim();
   const url = normalizeMappingUrl(rawUrl);
   if (!input || input.length > 80) {
@@ -251,16 +331,38 @@ async function saveUrlMapping(rawInput: string, rawUrl: string): Promise<UrlMapp
     throw new Error("Enter a valid http:// or https:// URL.");
   }
 
-  const mappings = await getUrlMappings();
-  if (mappings.some((mapping) => mapping.input.toLocaleLowerCase() === input.toLocaleLowerCase())) {
+  return { input, url };
+}
+
+function assertUniqueUrlMappingInput(
+  mappings: UrlMapping[],
+  input: string,
+  ignoredId?: string
+): void {
+  if (
+    mappings.some((mapping) =>
+      mapping.id !== ignoredId && mapping.input.toLocaleLowerCase() === input.toLocaleLowerCase()
+    )
+  ) {
     throw new Error(`“${input}” already has a mapping.`);
   }
+}
 
-  const mapping = { id: crypto.randomUUID(), input, url };
-  await extensionApi.storage.local.set({
-    [URL_MAPPINGS_STORAGE_KEY]: [...mappings, mapping]
+function mutateUrlMappings<T>(
+  mutation: (mappings: UrlMapping[]) => { mappings: UrlMapping[]; result: T }
+): Promise<T> {
+  const operation = urlMappingMutationQueue.then(async () => {
+    const currentMappings = await getUrlMappings();
+    const { mappings, result } = mutation(currentMappings);
+    await extensionApi.storage.local.set({ [URL_MAPPINGS_STORAGE_KEY]: mappings });
+    return result;
   });
-  return mapping;
+
+  urlMappingMutationQueue = operation.then(
+    () => undefined,
+    () => undefined
+  );
+  return operation;
 }
 
 async function activateTab(tabId: number | undefined): Promise<void> {

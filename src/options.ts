@@ -12,6 +12,12 @@ import {
   URL_MAPPINGS_STORAGE_KEY,
   type UrlMapping
 } from "./url-mappings";
+import {
+  getErrorMessage,
+  MESSAGE_TYPES,
+  type MessageResponse,
+  type PanelRequest
+} from "./messages";
 
 const extensionApi = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser ?? chrome;
 
@@ -31,6 +37,7 @@ const mappingStatus = getElement<HTMLDivElement>("mapping-status");
 const mappingList = getElement<HTMLDivElement>("mapping-list");
 const mappingCount = getElement<HTMLSpanElement>("mapping-count");
 let mappings: UrlMapping[] = [];
+let editingMappingSnapshot: UrlMapping | null = null;
 
 void loadSettings();
 void loadMappings();
@@ -43,6 +50,20 @@ mappingForm.addEventListener("submit", (event) => {
   void saveMapping();
 });
 mappingCancelButton.addEventListener("click", resetMappingForm);
+extensionApi.storage.onChanged.addListener((changes, areaName) => {
+  if (
+    areaName !== "local" ||
+    !Object.prototype.hasOwnProperty.call(changes, URL_MAPPINGS_STORAGE_KEY)
+  ) {
+    return;
+  }
+
+  mappings = normalizeUrlMappings(changes[URL_MAPPINGS_STORAGE_KEY]?.newValue);
+  if (mappingIdInput.value && !mappings.some((mapping) => mapping.id === mappingIdInput.value)) {
+    resetMappingForm();
+  }
+  renderMappings();
+});
 
 async function loadSettings(): Promise<void> {
   const values = await extensionApi.storage.local.get(AI_SETTINGS_STORAGE_KEY);
@@ -119,27 +140,40 @@ async function saveMapping(): Promise<void> {
     setMappingStatus("Enter a valid http:// or https:// URL.", "error");
     return;
   }
-  if (
-    mappings.some((mapping) => {
-      return mapping.id !== editingId && mapping.input.toLocaleLowerCase() === input.toLocaleLowerCase();
-    })
-  ) {
-    setMappingStatus(`“${input}” already has a mapping.`, "error");
-    return;
-  }
 
+  let request: PanelRequest;
   if (editingId) {
-    mappings = mappings.map((mapping) =>
-      mapping.id === editingId ? { ...mapping, input, url } : mapping
-    );
+    if (!editingMappingSnapshot || editingMappingSnapshot.id !== editingId) {
+      setMappingStatus("This mapping changed. Select Edit again and retry.", "error");
+      return;
+    }
+    request = {
+      type: MESSAGE_TYPES.UPDATE_URL_MAPPING,
+      id: editingId,
+      input,
+      url,
+      expectedInput: editingMappingSnapshot.input,
+      expectedUrl: editingMappingSnapshot.url
+    };
   } else {
-    mappings = [...mappings, { id: crypto.randomUUID(), input, url }];
+    request = { type: MESSAGE_TYPES.SAVE_URL_MAPPING, input, url };
   }
 
-  await extensionApi.storage.local.set({ [URL_MAPPINGS_STORAGE_KEY]: mappings });
-  renderMappings();
-  resetMappingForm();
-  setMappingStatus(editingId ? "Mapping updated." : "Mapping added.", "success");
+  mappingSaveButton.disabled = true;
+  try {
+    const response = await sendMessage<{ mapping: UrlMapping }>(request);
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+
+    await loadMappings();
+    resetMappingForm();
+    setMappingStatus(editingId ? "Mapping updated." : "Mapping added.", "success");
+  } catch (error) {
+    setMappingStatus(getErrorMessage(error, "Unable to save mapping."), "error");
+  } finally {
+    mappingSaveButton.disabled = false;
+  }
 }
 
 function renderMappings(): void {
@@ -169,7 +203,7 @@ function renderMappings(): void {
     actions.className = "row-actions";
     actions.append(
       createMappingButton("Edit", () => editMapping(mapping)),
-      createMappingButton("Delete", () => void deleteMapping(mapping.id), "danger")
+      createMappingButton("Delete", () => void deleteMapping(mapping), "danger")
     );
     row.append(details, actions);
     mappingList.append(row);
@@ -190,6 +224,7 @@ function createMappingButton(
 }
 
 function editMapping(mapping: UrlMapping): void {
+  editingMappingSnapshot = { ...mapping };
   mappingIdInput.value = mapping.id;
   mappingInput.value = mapping.input;
   mappingUrlInput.value = mapping.url;
@@ -198,19 +233,32 @@ function editMapping(mapping: UrlMapping): void {
   mappingInput.focus();
 }
 
-async function deleteMapping(id: string): Promise<void> {
-  mappings = mappings.filter((mapping) => mapping.id !== id);
-  await extensionApi.storage.local.set({ [URL_MAPPINGS_STORAGE_KEY]: mappings });
-  if (mappingIdInput.value === id) {
-    resetMappingForm();
+async function deleteMapping(mapping: UrlMapping): Promise<void> {
+  try {
+    const response = await sendMessage({
+      type: MESSAGE_TYPES.DELETE_URL_MAPPING,
+      id: mapping.id,
+      expectedInput: mapping.input,
+      expectedUrl: mapping.url
+    });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+
+    await loadMappings();
+    if (mappingIdInput.value === mapping.id) {
+      resetMappingForm();
+    }
+    setMappingStatus("Mapping deleted.", "success");
+  } catch (error) {
+    setMappingStatus(getErrorMessage(error, "Unable to delete mapping."), "error");
   }
-  renderMappings();
-  setMappingStatus("Mapping deleted.", "success");
 }
 
 function resetMappingForm(): void {
   mappingForm.reset();
   mappingIdInput.value = "";
+  editingMappingSnapshot = null;
   mappingSaveButton.textContent = "Add mapping";
   mappingCancelButton.hidden = true;
 }
@@ -348,4 +396,10 @@ function getElement<T extends HTMLElement>(id: string): T {
   }
 
   return element as T;
+}
+
+async function sendMessage<T extends object = Record<string, never>>(
+  request: PanelRequest
+): Promise<MessageResponse<T>> {
+  return (await extensionApi.runtime.sendMessage(request)) as MessageResponse<T>;
 }

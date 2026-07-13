@@ -5,6 +5,8 @@ export const MESSAGE_TYPES = {
   GET_BOOKMARKS: "GET_BOOKMARKS",
   GET_URL_MAPPINGS: "GET_URL_MAPPINGS",
   SAVE_URL_MAPPING: "SAVE_URL_MAPPING",
+  UPDATE_URL_MAPPING: "UPDATE_URL_MAPPING",
+  DELETE_URL_MAPPING: "DELETE_URL_MAPPING",
   GET_THEME: "GET_THEME",
   GET_UPDATE_STATUS: "GET_UPDATE_STATUS",
   SET_THEME: "SET_THEME",
@@ -62,6 +64,20 @@ export type PanelRequest =
   | { type: typeof MESSAGE_TYPES.GET_BOOKMARKS }
   | { type: typeof MESSAGE_TYPES.GET_URL_MAPPINGS }
   | { type: typeof MESSAGE_TYPES.SAVE_URL_MAPPING; input: string; url: string }
+  | {
+      type: typeof MESSAGE_TYPES.UPDATE_URL_MAPPING;
+      id: string;
+      input: string;
+      url: string;
+      expectedInput: string;
+      expectedUrl: string;
+    }
+  | {
+      type: typeof MESSAGE_TYPES.DELETE_URL_MAPPING;
+      id: string;
+      expectedInput: string;
+      expectedUrl: string;
+    }
   | { type: typeof MESSAGE_TYPES.GET_THEME }
   | { type: typeof MESSAGE_TYPES.GET_UPDATE_STATUS }
   | { type: typeof MESSAGE_TYPES.SET_THEME; theme: Theme }
@@ -86,12 +102,15 @@ export function isPanelRequest(value: unknown): value is PanelRequest {
 
   switch (value.type) {
     case MESSAGE_TYPES.SAVE_URL_MAPPING:
+      return isValidUrlMappingFields(value);
+    case MESSAGE_TYPES.UPDATE_URL_MAPPING:
       return (
-        typeof value.input === "string" &&
-        value.input.length <= 80 &&
-        typeof value.url === "string" &&
-        value.url.length <= 4_000
+        isValidUrlMappingId(value.id) &&
+        isValidUrlMappingFields(value) &&
+        isValidUrlMappingExpectation(value)
       );
+    case MESSAGE_TYPES.DELETE_URL_MAPPING:
+      return isValidUrlMappingId(value.id) && isValidUrlMappingExpectation(value);
     case MESSAGE_TYPES.SET_THEME:
       return value.theme === "light" || value.theme === "dark";
     case MESSAGE_TYPES.NAVIGATE_CURRENT_TAB:
@@ -104,6 +123,28 @@ export function isPanelRequest(value: unknown): value is PanelRequest {
     default:
       return Object.values(MESSAGE_TYPES).some((type) => type === value.type);
   }
+}
+
+function isValidUrlMappingFields(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.input === "string" &&
+    value.input.length <= 80 &&
+    typeof value.url === "string" &&
+    value.url.length <= 4_000
+  );
+}
+
+function isValidUrlMappingId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 100;
+}
+
+function isValidUrlMappingExpectation(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.expectedInput === "string" &&
+    value.expectedInput.length <= 80 &&
+    typeof value.expectedUrl === "string" &&
+    value.expectedUrl.length <= 4_000
+  );
 }
 
 function isValidAskPageRequest(value: Record<string, unknown>): boolean {
