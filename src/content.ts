@@ -373,7 +373,7 @@ interface RenderOptions {
         state.selectedIndex = 0;
         applyFilter(input.value);
       } else if (state.mode === "mapping-url") {
-        state.selectedIndex = 0;
+        state.selectedIndex = -1;
         renderMappingUrlChoices(input.value);
       }
     });
@@ -1002,8 +1002,12 @@ interface RenderOptions {
       return;
     }
 
-    state.selectedIndex =
-      (state.selectedIndex + delta + state.visibleItems.length) % state.visibleItems.length;
+    if (state.selectedIndex < 0) {
+      state.selectedIndex = delta > 0 ? 0 : state.visibleItems.length - 1;
+    } else {
+      state.selectedIndex =
+        (state.selectedIndex + delta + state.visibleItems.length) % state.visibleItems.length;
+    }
     state.ignoreMouseSelectionUntil = Date.now() + 250;
     syncSelectedItem();
   }
@@ -1198,6 +1202,7 @@ interface RenderOptions {
 
     state.pendingMappingName = name;
     state.mode = "mapping-url";
+    state.selectedIndex = -1;
     const input = ensurePanel().input;
     input.value = "";
     configureInputForMode();
@@ -1301,7 +1306,7 @@ interface RenderOptions {
     const tabs = filterTabs(queryTerms, bookmarks);
     state.visibleItems = [...tabs, ...bookmarks];
     if (state.selectedIndex >= state.visibleItems.length) {
-      state.selectedIndex = Math.max(0, state.visibleItems.length - 1);
+      state.selectedIndex = -1;
     }
 
     renderResults({
