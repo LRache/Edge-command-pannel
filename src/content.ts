@@ -841,23 +841,19 @@ interface RenderOptions {
 
     const icon = document.createElement("span");
     icon.className = "ecp-favicon";
+    icon.textContent =
+      item.type === ITEM_TYPES.COMMAND || item.type === ITEM_TYPES.URL_MAPPING
+        ? item.iconText
+        : (item.title.trim()[0] || "?").toUpperCase();
     if (
       item.type !== ITEM_TYPES.COMMAND &&
       item.type !== ITEM_TYPES.URL_MAPPING &&
       item.favIconUrl
     ) {
       const image = document.createElement("img");
-      image.src = item.favIconUrl;
       image.alt = "";
-      image.loading = "lazy";
-      icon.append(image);
-    } else {
-      icon.textContent =
-        item.type === ITEM_TYPES.COMMAND || item.type === ITEM_TYPES.URL_MAPPING
-          ? item.iconText
-          : item.type === ITEM_TYPES.TAB
-            ? "T"
-            : "B";
+      image.addEventListener("load", () => icon.replaceChildren(image));
+      image.src = item.favIconUrl;
     }
 
     const body = document.createElement("span");
