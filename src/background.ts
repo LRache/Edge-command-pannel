@@ -18,6 +18,9 @@ import {
   type UrlMapping
 } from "./url-mappings";
 
+const extensionApi = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser ?? chrome;
+const actionApi = getActionApi();
+
 const DEFAULT_THEME: Theme = "dark";
 const THEME_STORAGE_KEY = "commandPanelTheme";
 const THEMES = new Set<Theme>(["light", "dark"]);
@@ -45,10 +48,23 @@ interface GitHubTreeResponse {
   tree?: Array<{ path?: string; sha?: string; type?: string }>;
 }
 
+interface ExtensionActionApi {
+  onClicked: {
+    addListener(listener: (tab: chrome.tabs.Tab) => void | Promise<void>): void;
+  };
+  setBadgeText(details: { text: string }): Promise<void>;
+  setBadgeBackgroundColor(details: { color: string }): Promise<void>;
+}
+
+interface TabInjectionApi {
+  insertCSS(tabId: number, details: { file: string }): Promise<void>;
+  executeScript(tabId: number, details: { file: string }): Promise<unknown[]>;
+}
+
 let updateCheckPromise: Promise<ReleaseUpdateStatus> | null = null;
 let localBlobShasPromise: Promise<Map<string, string>> | null = null;
 
-chrome.commands.onCommand.addListener(async (command, tab) => {
+extensionApi.commands.onCommand.addListener(async (command, tab) => {
   if (command !== "toggle-command-panel") {
     return;
   }
@@ -56,19 +72,19 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
   await openCommandPanel(tab);
 });
 
-chrome.action.onClicked.addListener(openCommandPanel);
+actionApi.onClicked.addListener(openCommandPanel);
 
-chrome.runtime.onInstalled.addListener(() => {
+extensionApi.runtime.onInstalled.addListener(() => {
   scheduleUpdateChecks();
   void getReleaseUpdateStatus({ force: true });
 });
 
-chrome.runtime.onStartup.addListener(() => {
+extensionApi.runtime.onStartup.addListener(() => {
   scheduleUpdateChecks();
   void getReleaseUpdateStatus();
 });
 
-chrome.alarms.onAlarm.addListener((alarm) => {
+extensionApi.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === UPDATE_ALARM_NAME) {
     void getReleaseUpdateStatus({ force: true });
   }
@@ -82,13 +98,13 @@ async function openCommandPanel(tab?: chrome.tabs.Tab): Promise<void> {
 
   try {
     await ensurePanelInjected(targetTab.id);
-    await chrome.tabs.sendMessage(targetTab.id, { type: MESSAGE_TYPES.TOGGLE_PANEL });
+    await extensionApi.tabs.sendMessage(targetTab.id, { type: MESSAGE_TYPES.TOGGLE_PANEL });
   } catch (error) {
     console.warn("Unable to open command panel on this page.", error);
   }
 }
 
-chrome.runtime.onMessage.addListener((rawMessage: unknown, sender, sendResponse) => {
+extensionApi.runtime.onMessage.addListener((rawMessage: unknown, sender, sendResponse) => {
   if (!isPanelRequest(rawMessage)) {
     sendResponse({ ok: false, error: "Invalid extension request." });
     return false;
@@ -122,7 +138,7 @@ async function handleMessage(
     case MESSAGE_TYPES.ASK_PAGE:
       return { ok: true, answer: await askAboutPage(message.question, message.page) };
     case MESSAGE_TYPES.OPEN_AI_SETTINGS:
-      await chrome.runtime.openOptionsPage();
+      await extensionApi.runtime.openOptionsPage();
       break;
     case MESSAGE_TYPES.NEW_TAB:
       await openNewTab(sender.tab?.windowId);
@@ -153,7 +169,7 @@ async function handleMessage(
 }
 
 async function askAboutPage(question: string, page: PageContext): Promise<string> {
-  const values = await chrome.storage.local.get(AI_SETTINGS_STORAGE_KEY);
+  const values = await extensionApi.storage.local.get(AI_SETTINGS_STORAGE_KEY);
   const settings = normalizeAiSettings(values[AI_SETTINGS_STORAGE_KEY]);
   if (!settings.apiKey) {
     throw new Error("AI is not configured. Open AI Settings and add an API key.");
@@ -163,31 +179,43 @@ async function askAboutPage(question: string, page: PageContext): Promise<string
 }
 
 async function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const [tab] = await extensionApi.tabs.query({ active: true, lastFocusedWindow: true });
   return tab;
 }
 
 async function ensurePanelInjected(tabId: number): Promise<void> {
   try {
-    await chrome.tabs.sendMessage(tabId, { type: MESSAGE_TYPES.PING });
+    await extensionApi.tabs.sendMessage(tabId, { type: MESSAGE_TYPES.PING });
     return;
   } catch {
-    await chrome.scripting.insertCSS({
+    await insertPanelFiles(tabId);
+  }
+}
+
+async function insertPanelFiles(tabId: number): Promise<void> {
+  if (extensionApi.scripting) {
+    await extensionApi.scripting.insertCSS({
       target: { tabId },
       files: ["src/panel.css"]
     });
-    await chrome.scripting.executeScript({
+    await extensionApi.scripting.executeScript({
       target: { tabId },
       files: ["src/vendor/pinyin-pro.js", "src/content.js"]
     });
+    return;
   }
+
+  const tabsApi = extensionApi.tabs as typeof chrome.tabs & TabInjectionApi;
+  await tabsApi.insertCSS(tabId, { file: "src/panel.css" });
+  await tabsApi.executeScript(tabId, { file: "src/vendor/pinyin-pro.js" });
+  await tabsApi.executeScript(tabId, { file: "src/content.js" });
 }
 
 async function getCurrentWindowTabs(windowId?: number): Promise<PanelTab[]> {
   const queryInfo: chrome.tabs.QueryInfo = Number.isInteger(windowId)
     ? { windowId }
     : { currentWindow: true };
-  const tabs = await chrome.tabs.query(queryInfo);
+  const tabs = await extensionApi.tabs.query(queryInfo);
   return tabs
     .sort(compareRecentActivity)
     .map((tab) => ({
@@ -200,7 +228,7 @@ async function getCurrentWindowTabs(windowId?: number): Promise<PanelTab[]> {
 }
 
 async function getBookmarkBarItems(): Promise<PanelBookmark[]> {
-  const tree = await chrome.bookmarks.getTree();
+  const tree = await extensionApi.bookmarks.getTree();
   const bookmarkBar = findBookmarkBar(tree);
   const bookmarks: PanelBookmark[] = [];
   flattenBookmarks(bookmarkBar?.children || [], [], bookmarks);
@@ -240,7 +268,7 @@ async function activateTab(tabId: number | undefined): Promise<void> {
     throw new Error("Invalid tab id.");
   }
 
-  await chrome.tabs.update(tabId, { active: true });
+  await extensionApi.tabs.update(tabId, { active: true });
 }
 
 async function openBookmark(url: string, windowId?: number): Promise<void> {
@@ -253,13 +281,13 @@ async function openBookmark(url: string, windowId?: number): Promise<void> {
     createProperties.windowId = windowId;
   }
 
-  const tab = await chrome.tabs.create(createProperties);
+  const tab = await extensionApi.tabs.create(createProperties);
   if (isInteger(windowId)) {
-    await chrome.windows.update(windowId, { focused: true });
+    await extensionApi.windows.update(windowId, { focused: true });
   }
 
   if (isInteger(tab.id)) {
-    await chrome.tabs.update(tab.id, { active: true });
+    await extensionApi.tabs.update(tab.id, { active: true });
   }
 }
 
@@ -269,13 +297,13 @@ async function openNewTab(windowId?: number): Promise<void> {
     createProperties.windowId = windowId;
   }
 
-  const tab = await chrome.tabs.create(createProperties);
+  const tab = await extensionApi.tabs.create(createProperties);
   if (isInteger(windowId)) {
-    await chrome.windows.update(windowId, { focused: true });
+    await extensionApi.windows.update(windowId, { focused: true });
   }
 
   if (isInteger(tab.id)) {
-    await chrome.tabs.update(tab.id, { active: true });
+    await extensionApi.tabs.update(tab.id, { active: true });
   }
 }
 
@@ -284,13 +312,13 @@ async function copyCurrentTab(tabId?: number, windowId?: number): Promise<void> 
     throw new Error("Invalid current tab.");
   }
 
-  const tab = await chrome.tabs.duplicate(tabId);
+  const tab = await extensionApi.tabs.duplicate(tabId);
   if (isInteger(windowId)) {
-    await chrome.windows.update(windowId, { focused: true });
+    await extensionApi.windows.update(windowId, { focused: true });
   }
 
   if (isInteger(tab?.id)) {
-    await chrome.tabs.update(tab.id, { active: true });
+    await extensionApi.tabs.update(tab.id, { active: true });
   }
 }
 
@@ -299,7 +327,7 @@ async function closeCurrentTab(tabId?: number): Promise<void> {
     throw new Error("Invalid current tab.");
   }
 
-  await chrome.tabs.remove(tabId);
+  await extensionApi.tabs.remove(tabId);
 }
 
 async function reloadCurrentTab(tabId?: number): Promise<void> {
@@ -308,7 +336,7 @@ async function reloadCurrentTab(tabId?: number): Promise<void> {
   }
 
   setTimeout(() => {
-    chrome.tabs.reload(tabId);
+    extensionApi.tabs.reload(tabId);
   }, 0);
 }
 
@@ -320,11 +348,11 @@ async function navigateCurrentTab(tabId: number | undefined, url: string): Promi
     throw new Error("Unsupported URL.");
   }
 
-  await chrome.tabs.update(tabId, { url });
+  await extensionApi.tabs.update(tabId, { url });
 }
 
 async function getTheme(): Promise<Theme> {
-  const values = await chrome.storage.local.get(THEME_STORAGE_KEY);
+  const values = await extensionApi.storage.local.get(THEME_STORAGE_KEY);
   const theme = values[THEME_STORAGE_KEY];
   return isTheme(theme) ? theme : DEFAULT_THEME;
 }
@@ -334,12 +362,12 @@ async function setTheme(theme: Theme): Promise<Theme> {
     throw new Error("Unsupported theme.");
   }
 
-  await chrome.storage.local.set({ [THEME_STORAGE_KEY]: theme });
+  await extensionApi.storage.local.set({ [THEME_STORAGE_KEY]: theme });
   return theme;
 }
 
 function scheduleUpdateChecks(): void {
-  chrome.alarms.create(UPDATE_ALARM_NAME, {
+  extensionApi.alarms.create(UPDATE_ALARM_NAME, {
     delayInMinutes: 1,
     periodInMinutes: UPDATE_CHECK_INTERVAL_MINUTES
   });
@@ -348,7 +376,13 @@ function scheduleUpdateChecks(): void {
 async function getReleaseUpdateStatus(
   { force = false }: { force?: boolean } = {}
 ): Promise<ReleaseUpdateStatus> {
-  const values = await chrome.storage.local.get(UPDATE_STATUS_STORAGE_KEY);
+  if (isFirefoxRuntime()) {
+    const status = { available: false, checkedAt: Date.now() };
+    await updateActionBadge(status);
+    return status;
+  }
+
+  const values = await extensionApi.storage.local.get(UPDATE_STATUS_STORAGE_KEY);
   const storedStatus: unknown = values[UPDATE_STATUS_STORAGE_KEY];
   const cachedStatus = isReleaseUpdateStatus(storedStatus) ? storedStatus : undefined;
   const localFingerprint = await getLocalFingerprint();
@@ -369,7 +403,7 @@ async function getReleaseUpdateStatus(
 
   updateCheckPromise = checkLatestRelease()
     .then(async (status) => {
-      await chrome.storage.local.set({ [UPDATE_STATUS_STORAGE_KEY]: status });
+      await extensionApi.storage.local.set({ [UPDATE_STATUS_STORAGE_KEY]: status });
       await updateActionBadge(status);
       return status;
     })
@@ -481,7 +515,7 @@ function getBlobFingerprint(blobShas: ReadonlyMap<string, string>): string {
 }
 
 async function getLocalGitBlobSha(path: string): Promise<string> {
-  const response = await fetch(chrome.runtime.getURL(path), { cache: "no-store" });
+  const response = await fetch(extensionApi.runtime.getURL(path), { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Unable to read local extension file: ${path}`);
   }
@@ -497,10 +531,17 @@ async function getLocalGitBlobSha(path: string): Promise<string> {
 }
 
 async function updateActionBadge(status: ReleaseUpdateStatus): Promise<void> {
-  await chrome.action.setBadgeText({ text: status.available ? "UP" : "" });
+  await actionApi.setBadgeText({ text: status.available ? "UP" : "" });
   if (status.available) {
-    await chrome.action.setBadgeBackgroundColor({ color: "#b45309" });
+    await actionApi.setBadgeBackgroundColor({ color: "#b45309" });
   }
+}
+
+function getActionApi(): ExtensionActionApi {
+  const api = extensionApi as typeof chrome & {
+    browserAction?: ExtensionActionApi;
+  };
+  return api.action ?? api.browserAction ?? chrome.action;
 }
 
 function isSupportedTabUrl(url = ""): boolean {
@@ -566,14 +607,24 @@ function findBookmarkBar(
   tree: chrome.bookmarks.BookmarkTreeNode[]
 ): chrome.bookmarks.BookmarkTreeNode | undefined {
   const rootChildren = tree[0]?.children || [];
-  return rootChildren.find((node) => node.id === "1") || rootChildren[0];
+  return (
+    rootChildren.find((node) => node.id === "1" || node.id === "toolbar_____") || rootChildren[0]
+  );
 }
 
 function getFaviconUrl(pageUrl: string): string {
-  const faviconUrl = new URL(chrome.runtime.getURL("/_favicon/"));
+  if (isFirefoxRuntime()) {
+    return "";
+  }
+
+  const faviconUrl = new URL(extensionApi.runtime.getURL("/_favicon/"));
   faviconUrl.searchParams.set("pageUrl", pageUrl);
   faviconUrl.searchParams.set("size", "32");
   return faviconUrl.toString();
+}
+
+function isFirefoxRuntime(): boolean {
+  return globalThis.navigator?.userAgent.includes("Firefox") ?? false;
 }
 
 function isTheme(value: unknown): value is Theme {

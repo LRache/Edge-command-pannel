@@ -13,6 +13,8 @@ import {
   type UrlMapping
 } from "./url-mappings";
 
+const extensionApi = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser ?? chrome;
+
 const form = getElement<HTMLFormElement>("ai-settings-form");
 const baseUrlInput = getElement<HTMLInputElement>("base-url");
 const modelInput = getElement<HTMLInputElement>("model");
@@ -43,7 +45,7 @@ mappingForm.addEventListener("submit", (event) => {
 mappingCancelButton.addEventListener("click", resetMappingForm);
 
 async function loadSettings(): Promise<void> {
-  const values = await chrome.storage.local.get(AI_SETTINGS_STORAGE_KEY);
+  const values = await extensionApi.storage.local.get(AI_SETTINGS_STORAGE_KEY);
   let settings: AiSettings;
   try {
     settings = normalizeAiSettings(values[AI_SETTINGS_STORAGE_KEY]);
@@ -74,13 +76,13 @@ async function saveSettings(): Promise<void> {
     }
 
     const originPattern = getOriginPattern(settings.baseUrl);
-    const granted = await chrome.permissions.request({ origins: [originPattern] });
+    const granted = await ensureOriginPermission(originPattern);
     if (!granted) {
       throw new Error(`Permission to connect to ${new URL(settings.baseUrl).origin} was not granted.`);
     }
 
     const previousSettings = await readStoredSettings();
-    await chrome.storage.local.set({ [AI_SETTINGS_STORAGE_KEY]: settings });
+    await extensionApi.storage.local.set({ [AI_SETTINGS_STORAGE_KEY]: settings });
     baseUrlInput.value = settings.baseUrl;
     const removedPreviousPermission = await removeUnusedOriginPermission(previousSettings, settings);
     if (removedPreviousPermission) {
@@ -214,7 +216,7 @@ function resetMappingForm(): void {
 }
 
 async function readStoredSettings(): Promise<AiSettings | null> {
-  const values = await chrome.storage.local.get(AI_SETTINGS_STORAGE_KEY);
+  const values = await extensionApi.storage.local.get(AI_SETTINGS_STORAGE_KEY);
   if (!Object.prototype.hasOwnProperty.call(values, AI_SETTINGS_STORAGE_KEY)) {
     return null;
   }
@@ -239,17 +241,94 @@ async function removeUnusedOriginPermission(
   if (previousOrigin === nextOrigin) {
     return true;
   }
+  if (isRequiredOriginPermission(previousOrigin)) {
+    return true;
+  }
 
   try {
-    const hasPreviousPermission = await chrome.permissions.contains({ origins: [previousOrigin] });
+    const hasPreviousPermission = await extensionApi.permissions.contains({ origins: [previousOrigin] });
     if (!hasPreviousPermission) {
       return true;
     }
 
-    return await chrome.permissions.remove({ origins: [previousOrigin] });
+    return await extensionApi.permissions.remove({ origins: [previousOrigin] });
   } catch {
     return false;
   }
+}
+
+async function ensureOriginPermission(originPattern: string): Promise<boolean> {
+  if (await extensionApi.permissions.contains({ origins: [originPattern] })) {
+    return true;
+  }
+
+  return await extensionApi.permissions.request({ origins: [originPattern] });
+}
+
+function isRequiredOriginPermission(originPattern: string): boolean {
+  const manifest = extensionApi.runtime.getManifest() as chrome.runtime.Manifest & {
+    host_permissions?: string[];
+    permissions?: string[];
+  };
+  const requiredOriginPatterns = [
+    ...(manifest.host_permissions || []),
+    ...(manifest.permissions || []).filter(isOriginMatchPattern)
+  ];
+
+  return requiredOriginPatterns.some((requiredPattern) =>
+    doesPermissionPatternCoverOrigin(requiredPattern, originPattern)
+  );
+}
+
+function doesPermissionPatternCoverOrigin(requiredPattern: string, originPattern: string): boolean {
+  if (requiredPattern === "<all_urls>") {
+    return true;
+  }
+
+  const required = parseOriginMatchPattern(requiredPattern);
+  const origin = parseOriginMatchPattern(originPattern);
+  if (!required || !origin) {
+    return requiredPattern === originPattern;
+  }
+
+  return (
+    doesSchemeMatch(required.scheme, origin.scheme) &&
+    doesHostMatch(required.host, origin.host)
+  );
+}
+
+function parseOriginMatchPattern(pattern: string): { scheme: string; host: string } | null {
+  const match = /^(\*|http|https):\/\/([^/]+)\//.exec(pattern);
+  if (!match) {
+    return null;
+  }
+
+  const [, scheme, host] = match;
+  if (!scheme || !host) {
+    return null;
+  }
+
+  return { scheme, host };
+}
+
+function doesSchemeMatch(requiredScheme: string, originScheme: string): boolean {
+  return requiredScheme === "*" || requiredScheme === originScheme;
+}
+
+function doesHostMatch(requiredHost: string, originHost: string): boolean {
+  if (requiredHost === "*") {
+    return true;
+  }
+  if (requiredHost.startsWith("*.")) {
+    const baseHost = requiredHost.slice(2);
+    return originHost === baseHost || originHost.endsWith(`.${baseHost}`);
+  }
+
+  return requiredHost === originHost;
+}
+
+function isOriginMatchPattern(permission: string): boolean {
+  return permission === "<all_urls>" || /^(\*|http|https):\/\/[^/]+\//.test(permission);
 }
 
 function setStatus(message: string, kind: "normal" | "success" | "error"): void {
