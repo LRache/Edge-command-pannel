@@ -1,6 +1,6 @@
 # Edge Command Panel
 
-A TypeScript Microsoft Edge extension that opens a VS Code-like command panel on the current webpage. It shows recent tabs and bookmark bar items together in two visual sections: tabs on top, bookmarks below.
+A TypeScript Microsoft Edge extension that opens a VS Code-like command panel on the current webpage. It searches custom URL mappings, recent tabs, bookmark bar items, and built-in commands.
 
 ## Install for local development
 
@@ -43,6 +43,8 @@ Every push to `main` runs the GitHub Actions workflow in `.github/workflows/rele
 - Enter an `http://`, `https://`, `edge://`, or `chrome://` URL, or a bare domain such as `example.com/path`, to show a bottom action that navigates the current tab directly to that URL (for example, `edge://extensions` or `chrome://extensions`).
 - The extension checks the latest published GitHub release (including pre-releases) every six hours. When local extension files differ from that release, the toolbar icon shows an `UP` badge and the command panel shows an update item linking to the release.
 - Type `help`, `帮助`, `内置命令`, or related pinyin to show all built-in commands.
+- Type `mapping`, `映射`, or `设置` and run **Mapping: Add URL Mapping**. Enter the mapping name and press `Enter`, then type a URL or choose one from recent tabs or bookmarks. The entire flow stays inside the command panel.
+- A custom mapping is shown above other result types. An exact input match ranks first, so pressing `Enter` opens its URL in a new active tab.
 - Press `ArrowDown` or `ArrowUp` to move through results.
 - Press `Enter` to activate the selected tab, open the selected bookmark, run a command, or navigate to the entered URL.
 - Press `Escape` or click outside the panel to close it.
@@ -65,10 +67,11 @@ The API key is stored in `chrome.storage.local` in the current browser profile a
 
 - `manifest.json` declares the Manifest V3 extension, permissions, shortcut, compiled background service worker, and compiled content script.
 - `src/messages.ts` defines the shared, validated message protocol and data models used across extension contexts.
-- `src/background.ts` handles the keyboard command, reads recent tabs and bookmark bar items, resolves favicons, persists the theme, activates tabs, and opens bookmarks.
-- `src/content.ts` renders the command panel sections, manages search and keyboard navigation, extracts visible page text, and displays Ask answers.
+- `src/background.ts` handles the keyboard command, reads tabs, bookmarks, and URL mappings, resolves favicons, persists settings, and opens URLs.
+- `src/content.ts` renders command-panel sections, manages search and keyboard navigation, extracts visible page text, and displays Ask answers.
 - `src/ai-settings.ts` validates and normalizes the shared AI provider configuration.
-- `src/options.ts`, `src/options.html`, and `src/options.css` provide the AI provider settings page.
+- `src/url-mappings.ts` validates and normalizes persistent custom URL mappings.
+- `src/options.ts`, `src/options.html`, and `src/options.css` provide the AI provider and URL mapping settings page.
 - `src/pinyin.ts` provides a typed wrapper around the vendored `pinyin-pro` library for full-pinyin and pinyin-initial search indexing.
 - `src/vendor/pinyin-pro.js` is the MIT-licensed browser build of `pinyin-pro`.
 - `src/panel.css` styles the overlay.

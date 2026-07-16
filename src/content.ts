@@ -1,4 +1,4 @@
-import { buildSearchText, normalizeSearchTerms } from "./pinyin";
+import { buildSearchText, normalizeSearchTerm, normalizeSearchTerms } from "./pinyin";
 import { extractPageContext } from "./page-context";
 import { renderMarkdown } from "./markdown";
 import {
@@ -14,6 +14,7 @@ import {
   type ReleaseUpdateStatus,
   type Theme
 } from "./messages";
+import type { UrlMapping } from "./url-mappings";
 
 const extensionApi = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser ?? chrome;
 
@@ -24,6 +25,7 @@ declare global {
 const ITEM_TYPES = {
   TAB: "tab",
   BOOKMARK: "bookmark",
+  URL_MAPPING: "url-mapping",
   COMMAND: "command"
 } as const;
 
@@ -38,9 +40,10 @@ type CommandAction =
   | "navigate-current-tab"
   | "open-update-page"
   | "ask-current-page"
-  | "open-ai-settings";
+  | "open-ai-settings"
+  | "create-url-mapping";
 
-type PanelMode = "search" | "ask";
+type PanelMode = "search" | "ask" | "mapping-name" | "mapping-url";
 
 interface TabItem extends PanelTab {
   type: typeof ITEM_TYPES.TAB;
@@ -48,6 +51,13 @@ interface TabItem extends PanelTab {
 
 interface BookmarkItem extends PanelBookmark {
   type: typeof ITEM_TYPES.BOOKMARK;
+}
+
+interface UrlMappingItem extends UrlMapping {
+  type: typeof ITEM_TYPES.URL_MAPPING;
+  title: string;
+  subtitle: string;
+  iconText: string;
 }
 
 interface CommandItem {
@@ -63,7 +73,7 @@ interface CommandItem {
   question?: string;
 }
 
-type PanelItem = TabItem | BookmarkItem | CommandItem;
+type PanelItem = TabItem | BookmarkItem | UrlMappingItem | CommandItem;
 type SearchableField = "title" | "url" | "path" | "subtitle" | "aliases";
 type SearchField = readonly [field: SearchableField, baseScore: number];
 type ActionResponse =
@@ -78,6 +88,7 @@ interface PanelState {
   sections: {
     tab: TabItem[];
     bookmark: BookmarkItem[];
+    "url-mapping": UrlMappingItem[];
   };
   visibleItems: PanelItem[];
   selectedIndex: number;
@@ -90,9 +101,11 @@ interface PanelState {
   asking: boolean;
   askRequestId: number;
   pageContext: PageContext | null;
+  pendingMappingName: string;
 }
 
 interface RenderOptions {
+  mappings?: UrlMappingItem[];
   tabs?: TabItem[];
   bookmarks?: BookmarkItem[];
   commands?: CommandItem[];
@@ -120,6 +133,15 @@ interface RenderOptions {
       iconText: "?",
       action: "show-built-in-commands",
       aliases: "help commands builtin built-in command list show commands 帮助 命令 内置命令 查看命令 bangzhu mingling neizhimingling chakana mingling"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "create-url-mapping",
+      title: "Mapping: Add URL Mapping",
+      subtitle: "Enter a name and URL without leaving the command panel",
+      iconText: "↗",
+      action: "create-url-mapping",
+      aliases: "add create url mapping mappings custom shortcut keyword 配置 设置 新增 添加 网址 映射 自定义 输入 peizhi shezhi xinzeng tianjia wangzhi yingshe"
     },
     {
       type: ITEM_TYPES.COMMAND,
@@ -211,7 +233,8 @@ interface RenderOptions {
     status: null,
     sections: {
       [ITEM_TYPES.TAB]: [],
-      [ITEM_TYPES.BOOKMARK]: []
+      [ITEM_TYPES.BOOKMARK]: [],
+      [ITEM_TYPES.URL_MAPPING]: []
     },
     visibleItems: [],
     selectedIndex: 0,
@@ -223,7 +246,8 @@ interface RenderOptions {
     mode: "search",
     asking: false,
     askRequestId: 0,
-    pageContext: null
+    pageContext: null,
+    pendingMappingName: ""
   };
 
   const searchTextCache = new WeakMap<PanelItem, Map<SearchableField, string>>();
@@ -262,32 +286,36 @@ interface RenderOptions {
     state.mode = "search";
     state.asking = false;
     state.pageContext = null;
+    state.pendingMappingName = "";
     state.askRequestId += 1;
     elements.input.value = "";
     configureInputForMode();
     state.selectedIndex = 0;
     elements.input.focus();
-    setStatus("Loading recent tabs and bookmark bar...");
+    setStatus("Loading URL mappings, recent tabs, and bookmark bar...");
     elements.list.textContent = "";
 
     try {
-      const [theme, transparentPanel, tabs, bookmarks] = await Promise.all([
+      const [theme, transparentPanel, tabs, bookmarks, mappings] = await Promise.all([
         requestTheme(),
         requestTransparentPanel(),
         requestTabs(),
-        requestBookmarks()
+        requestBookmarks(),
+        requestUrlMappings()
       ]);
       applyTheme(theme);
       applyPanelTransparency(transparentPanel);
       state.sections[ITEM_TYPES.TAB] = tabs;
       state.sections[ITEM_TYPES.BOOKMARK] = bookmarks;
+      state.sections[ITEM_TYPES.URL_MAPPING] = mappings;
       applyFilter("");
       void refreshUpdateStatus();
     } catch (error) {
       state.sections[ITEM_TYPES.TAB] = [];
       state.sections[ITEM_TYPES.BOOKMARK] = [];
+      state.sections[ITEM_TYPES.URL_MAPPING] = [];
       state.visibleItems = [];
-      renderResults({ tabs: [], bookmarks: [], commands: [] });
+      renderResults({ mappings: [], tabs: [], bookmarks: [], commands: [] });
       setStatus(getErrorMessage(error, "Unable to load command panel items."));
     }
   }
@@ -342,7 +370,11 @@ interface RenderOptions {
     input.setAttribute("aria-label", "Search recent tabs, bookmark bar, and commands");
     input.addEventListener("input", () => {
       if (state.mode === "search") {
+        state.selectedIndex = 0;
         applyFilter(input.value);
+      } else if (state.mode === "mapping-url") {
+        state.selectedIndex = -1;
+        renderMappingUrlChoices(input.value);
       }
     });
     input.addEventListener("keydown", handleKeyDown);
@@ -399,6 +431,27 @@ interface RenderOptions {
     return values[TRANSPARENT_PANEL_STORAGE_KEY] === true;
   }
 
+  async function requestUrlMappings(): Promise<UrlMappingItem[]> {
+    const response = await sendMessage<{ mappings: UrlMapping[] }>({
+      type: MESSAGE_TYPES.GET_URL_MAPPINGS
+    });
+    if (!response?.ok) {
+      throw new Error(response?.error || "Unable to load URL mappings.");
+    }
+
+    return (response.mappings || []).map(toUrlMappingItem);
+  }
+
+  function toUrlMappingItem(mapping: UrlMapping): UrlMappingItem {
+    return {
+      ...mapping,
+      type: ITEM_TYPES.URL_MAPPING,
+      title: mapping.input,
+      subtitle: mapping.url,
+      iconText: "↗"
+    };
+  }
+
   async function refreshUpdateStatus(): Promise<void> {
     try {
       const response = await sendMessage<{ status: ReleaseUpdateStatus }>({
@@ -418,8 +471,14 @@ interface RenderOptions {
   }
 
   function applyFilter(query: string): void {
+    const queryTerms = pinyinSearch.normalizeSearchTerms(query);
+    const mappings = filterUrlMappings(query, queryTerms);
+    const normalizedQuery = normalizeSearchTerm(query);
+    const hasExactMapping = mappings.some(
+      (mapping) => normalizeSearchTerm(mapping.input) === normalizedQuery
+    );
     const askCommand = createAskCommand(query);
-    if (askCommand) {
+    if (askCommand && !hasExactMapping) {
       state.selectedIndex = 0;
       state.visibleItems = [askCommand];
       renderResults({
@@ -429,7 +488,6 @@ interface RenderOptions {
       return;
     }
 
-    const queryTerms = pinyinSearch.normalizeSearchTerms(query);
     const bookmarks = filterBookmarks(queryTerms);
     const tabs = filterTabs(queryTerms, bookmarks);
     const commands = filterCommands(queryTerms);
@@ -437,12 +495,35 @@ interface RenderOptions {
     const urlCommands = urlCommand ? [urlCommand] : [];
     const updateCommands = createUpdateCommands();
 
-    state.visibleItems = [...tabs, ...bookmarks, ...commands, ...urlCommands, ...updateCommands];
+    state.visibleItems = [
+      ...mappings,
+      ...tabs,
+      ...bookmarks,
+      ...commands,
+      ...urlCommands,
+      ...updateCommands
+    ];
     if (state.selectedIndex >= state.visibleItems.length) {
       state.selectedIndex = Math.max(0, state.visibleItems.length - 1);
     }
 
-    renderResults({ tabs, bookmarks, commands, urlCommands, updateCommands });
+    renderResults({ mappings, tabs, bookmarks, commands, urlCommands, updateCommands });
+  }
+
+  function filterUrlMappings(query: string, queryTerms: string[]): UrlMappingItem[] {
+    if (queryTerms.length === 0) {
+      return [];
+    }
+
+    const normalizedQuery = normalizeSearchTerm(query);
+    return rankItems(state.sections[ITEM_TYPES.URL_MAPPING], queryTerms, [
+      ["title", 400],
+      ["url", 100]
+    ]).sort((a, b) => {
+      const aExact = normalizeSearchTerm(a.input) === normalizedQuery;
+      const bExact = normalizeSearchTerm(b.input) === normalizedQuery;
+      return Number(bExact) - Number(aExact);
+    });
   }
 
   function createAskCommand(query: string): CommandItem | null {
@@ -681,6 +762,7 @@ interface RenderOptions {
   }
 
   function renderResults({
+    mappings = [],
     tabs = [],
     bookmarks = [],
     commands = [],
@@ -692,6 +774,9 @@ interface RenderOptions {
     list.textContent = "";
 
     const fragment = document.createDocumentFragment();
+    if (mappings.length > 0) {
+      appendSection(fragment, "URL Mappings", mappings, "");
+    }
     if (includeEmptySections || tabs.length > 0) {
       appendSection(fragment, "Recent Tabs", tabs, "No matching recent tabs");
     }
@@ -710,12 +795,14 @@ interface RenderOptions {
     list.append(fragment);
     syncSelectedItem();
 
+    const mappingLabel =
+      mappings.length > 0 ? `${mappings.length} URL mapping${mappings.length === 1 ? "" : "s"}, ` : "";
     const tabLabel = `${tabs.length} recent tab${tabs.length === 1 ? "" : "s"}`;
     const bookmarkLabel = `${bookmarks.length} bookmark${bookmarks.length === 1 ? "" : "s"}`;
     const commandCount = commands.length + urlCommands.length + updateCommands.length;
     const commandLabel =
       commandCount > 0 ? `, ${commandCount} command${commandCount === 1 ? "" : "s"}` : "";
-    setStatus(`${tabLabel}, ${bookmarkLabel}${commandLabel}`);
+    setStatus(`${mappingLabel}${tabLabel}, ${bookmarkLabel}${commandLabel}`);
   }
 
   function appendSection(
@@ -776,19 +863,19 @@ interface RenderOptions {
 
     const icon = document.createElement("span");
     icon.className = "ecp-favicon";
-    if (item.type !== ITEM_TYPES.COMMAND && item.favIconUrl) {
+    icon.textContent =
+      item.type === ITEM_TYPES.COMMAND || item.type === ITEM_TYPES.URL_MAPPING
+        ? item.iconText
+        : (item.title.trim()[0] || "?").toUpperCase();
+    if (
+      item.type !== ITEM_TYPES.COMMAND &&
+      item.type !== ITEM_TYPES.URL_MAPPING &&
+      item.favIconUrl
+    ) {
       const image = document.createElement("img");
-      image.src = item.favIconUrl;
       image.alt = "";
-      image.loading = "lazy";
-      icon.append(image);
-    } else {
-      icon.textContent =
-        item.type === ITEM_TYPES.COMMAND
-          ? item.iconText
-          : item.type === ITEM_TYPES.TAB
-            ? "T"
-            : "B";
+      image.addEventListener("load", () => icon.replaceChildren(image));
+      image.src = item.favIconUrl;
     }
 
     const body = document.createElement("span");
@@ -801,7 +888,7 @@ interface RenderOptions {
     const url = document.createElement("span");
     url.className = "ecp-url";
     url.textContent =
-      item.type === ITEM_TYPES.COMMAND
+      item.type === ITEM_TYPES.COMMAND || item.type === ITEM_TYPES.URL_MAPPING
         ? item.subtitle
         :
       item.type === ITEM_TYPES.BOOKMARK && item.path
@@ -833,6 +920,42 @@ interface RenderOptions {
   }
 
   function handleKeyDown(event: KeyboardEvent): void {
+    if (state.mode === "mapping-name" || state.mode === "mapping-url") {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (state.mode === "mapping-url") {
+          returnToMappingNameStep();
+        } else {
+          exitMappingMode();
+        }
+        return;
+      }
+      if (state.mode === "mapping-url" && event.key === "ArrowDown") {
+        event.preventDefault();
+        moveSelection(1);
+        return;
+      }
+      if (state.mode === "mapping-url" && event.key === "ArrowUp") {
+        event.preventDefault();
+        moveSelection(-1);
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (state.mode === "mapping-name") {
+          submitMappingName(ensurePanel().input.value);
+        } else {
+          const selectedItem = state.visibleItems[state.selectedIndex];
+          const selectedUrl =
+            selectedItem?.type === ITEM_TYPES.TAB || selectedItem?.type === ITEM_TYPES.BOOKMARK
+              ? selectedItem.url
+              : ensurePanel().input.value;
+          void submitMappingUrl(selectedUrl);
+        }
+      }
+      return;
+    }
+
     if (state.mode === "ask") {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -879,8 +1002,12 @@ interface RenderOptions {
       return;
     }
 
-    state.selectedIndex =
-      (state.selectedIndex + delta + state.visibleItems.length) % state.visibleItems.length;
+    if (state.selectedIndex < 0) {
+      state.selectedIndex = delta > 0 ? 0 : state.visibleItems.length - 1;
+    } else {
+      state.selectedIndex =
+        (state.selectedIndex + delta + state.visibleItems.length) % state.visibleItems.length;
+    }
     state.ignoreMouseSelectionUntil = Date.now() + 250;
     syncSelectedItem();
   }
@@ -891,11 +1018,21 @@ interface RenderOptions {
       return;
     }
 
+    if (
+      state.mode === "mapping-url" &&
+      (item.type === ITEM_TYPES.TAB || item.type === ITEM_TYPES.BOOKMARK)
+    ) {
+      await submitMappingUrl(item.url);
+      return;
+    }
+
     const response =
       item.type === ITEM_TYPES.TAB
         ? await activateTab(item)
         : item.type === ITEM_TYPES.BOOKMARK
           ? await openBookmark(item)
+          : item.type === ITEM_TYPES.URL_MAPPING
+            ? await openUrlMapping(item)
           : await runCommand(item);
     if (!response?.ok) {
       setStatus(response?.error || "Unable to open item.");
@@ -932,6 +1069,14 @@ interface RenderOptions {
     return sendMessage({
       type: MESSAGE_TYPES.OPEN_BOOKMARK,
       url: bookmark.url
+    });
+  }
+
+  async function openUrlMapping(mapping: UrlMappingItem): Promise<ActionResponse> {
+    setStatus(`Opening ${mapping.input}...`);
+    return sendMessage({
+      type: MESSAGE_TYPES.OPEN_BOOKMARK,
+      url: mapping.url
     });
   }
 
@@ -1003,6 +1148,11 @@ interface RenderOptions {
       return response.ok ? { ok: true, keepOpen: true } : response;
     }
 
+    if (command.action === "create-url-mapping") {
+      enterMappingMode();
+      return { ok: true, keepOpen: true };
+    }
+
     if (!command.theme) {
       return { ok: false, error: "Invalid command." };
     }
@@ -1019,6 +1169,154 @@ interface RenderOptions {
     }
 
     return response;
+  }
+
+  function enterMappingMode(): void {
+    state.mode = "mapping-name";
+    state.pendingMappingName = "";
+    state.visibleItems = [];
+    state.selectedIndex = 0;
+
+    const input = ensurePanel().input;
+    input.value = "";
+    configureInputForMode();
+    renderMappingStep();
+    setStatus("URL Mapping · Step 1 of 2");
+    input.focus();
+  }
+
+  function submitMappingName(rawName: string): void {
+    const name = rawName.trim();
+    if (!name || name.length > 80) {
+      setStatus("Enter a mapping name containing 1 to 80 characters.");
+      return;
+    }
+    if (
+      state.sections[ITEM_TYPES.URL_MAPPING].some(
+        (mapping) => mapping.input.toLocaleLowerCase() === name.toLocaleLowerCase()
+      )
+    ) {
+      setStatus(`“${name}” already has a mapping.`);
+      return;
+    }
+
+    state.pendingMappingName = name;
+    state.mode = "mapping-url";
+    state.selectedIndex = -1;
+    const input = ensurePanel().input;
+    input.value = "";
+    configureInputForMode();
+    renderMappingUrlChoices("");
+    input.focus();
+  }
+
+  async function submitMappingUrl(rawUrl: string): Promise<void> {
+    const input = ensurePanel().input;
+    if (!rawUrl.trim()) {
+      setStatus("Enter the URL for this mapping.");
+      return;
+    }
+
+    input.disabled = true;
+    setStatus("Saving URL mapping...");
+    let response: MessageResponse<{ mapping: UrlMapping }>;
+    try {
+      response = await sendMessage<{ mapping: UrlMapping }>({
+        type: MESSAGE_TYPES.SAVE_URL_MAPPING,
+        input: state.pendingMappingName,
+        url: rawUrl
+      });
+    } catch (error) {
+      input.disabled = false;
+      setStatus(getErrorMessage(error, "Unable to save URL mapping."));
+      input.focus();
+      return;
+    }
+
+    if (!response.ok) {
+      input.disabled = false;
+      setStatus(response.error);
+      input.focus();
+      return;
+    }
+
+    const mapping = toUrlMappingItem(response.mapping);
+    state.sections[ITEM_TYPES.URL_MAPPING] = [
+      ...state.sections[ITEM_TYPES.URL_MAPPING],
+      mapping
+    ];
+    state.mode = "search";
+    state.pendingMappingName = "";
+    state.selectedIndex = 0;
+    input.disabled = false;
+    input.value = mapping.input;
+    configureInputForMode();
+    applyFilter(mapping.input);
+    setStatus(`Saved “${mapping.input}” → ${mapping.url}`);
+    input.focus();
+  }
+
+  function returnToMappingNameStep(): void {
+    state.mode = "mapping-name";
+    state.visibleItems = [];
+    state.selectedIndex = 0;
+    const input = ensurePanel().input;
+    input.value = state.pendingMappingName;
+    configureInputForMode();
+    renderMappingStep();
+    setStatus("URL Mapping · Step 1 of 2");
+    input.focus();
+    input.select();
+  }
+
+  function exitMappingMode(): void {
+    state.mode = "search";
+    state.pendingMappingName = "";
+    const input = ensurePanel().input;
+    input.value = "";
+    configureInputForMode();
+    state.selectedIndex = 0;
+    applyFilter("");
+    input.focus();
+  }
+
+  function renderMappingStep(): void {
+    const list = ensurePanel().list;
+    list.textContent = "";
+
+    const container = document.createElement("section");
+    container.className = "ecp-ask ecp-ask-intro";
+    const heading = document.createElement("div");
+    heading.className = "ecp-section-title";
+    const body = document.createElement("div");
+    body.className = "ecp-ask-content";
+
+    if (state.mode === "mapping-name") {
+      heading.textContent = "Add URL Mapping · Step 1 of 2";
+      body.textContent = "Enter a short name or keyword, then press Enter. Press Escape to cancel.";
+    }
+
+    container.append(heading, body);
+    list.append(container);
+  }
+
+  function renderMappingUrlChoices(query: string): void {
+    const queryTerms = pinyinSearch.normalizeSearchTerms(query);
+    const bookmarks = filterBookmarks(queryTerms);
+    const tabs = filterTabs(queryTerms, bookmarks);
+    state.visibleItems = [...tabs, ...bookmarks];
+    if (state.selectedIndex >= state.visibleItems.length) {
+      state.selectedIndex = -1;
+    }
+
+    renderResults({
+      tabs,
+      bookmarks,
+      includeEmptySections: true
+    });
+    setStatus(
+      `URL Mapping · Step 2 of 2 · Type a URL or choose a tab/bookmark for “${state.pendingMappingName}”`
+    );
   }
 
   function enterAskMode(): void {
@@ -1163,12 +1461,22 @@ interface RenderOptions {
   function configureInputForMode(): void {
     const input = ensurePanel().input;
     const isAskMode = state.mode === "ask";
-    input.placeholder = isAskMode
-      ? "Ask a question about the current page"
-      : "Search recent tabs, bookmark bar, and commands";
+    if (isAskMode) {
+      input.placeholder = "Ask a question about the current page";
+    } else if (state.mode === "mapping-name") {
+      input.placeholder = "Mapping name, for example: mail";
+    } else if (state.mode === "mapping-url") {
+      input.placeholder = "URL, for example: https://outlook.office.com";
+    } else {
+      input.placeholder = "Type a URL mapping, or search tabs, bookmarks, and commands";
+    }
     input.setAttribute("aria-label", input.placeholder);
     if (isAskMode) {
       input.maxLength = MAX_ASK_QUESTION_LENGTH;
+    } else if (state.mode === "mapping-name") {
+      input.maxLength = 80;
+    } else if (state.mode === "mapping-url") {
+      input.maxLength = 4_000;
     } else {
       input.removeAttribute("maxlength");
     }
@@ -1194,6 +1502,7 @@ interface RenderOptions {
     state.selectedIndex = 0;
     state.visibleItems = [...BUILT_IN_COMMANDS];
     renderResults({
+      mappings: [],
       tabs: [],
       bookmarks: [],
       commands: BUILT_IN_COMMANDS,

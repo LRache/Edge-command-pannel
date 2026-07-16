@@ -11,6 +11,12 @@ import {
 import { AI_SETTINGS_STORAGE_KEY, normalizeAiSettings } from "./ai-settings";
 import { requestPageAnswer } from "./ai-client";
 import UPDATE_TRACKED_FILES from "../config/update-tracked-files.json";
+import {
+  normalizeMappingUrl,
+  normalizeUrlMappings,
+  URL_MAPPINGS_STORAGE_KEY,
+  type UrlMapping
+} from "./url-mappings";
 
 const extensionApi = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser ?? chrome;
 const actionApi = getActionApi();
@@ -57,6 +63,7 @@ interface TabInjectionApi {
 
 let updateCheckPromise: Promise<ReleaseUpdateStatus> | null = null;
 let localBlobShasPromise: Promise<Map<string, string>> | null = null;
+let urlMappingMutationQueue: Promise<void> = Promise.resolve();
 
 extensionApi.commands.onCommand.addListener(async (command, tab) => {
   if (command !== "toggle-command-panel") {
@@ -119,6 +126,24 @@ async function handleMessage(
       return { ok: true, tabs: await getCurrentWindowTabs(sender.tab?.windowId) };
     case MESSAGE_TYPES.GET_BOOKMARKS:
       return { ok: true, bookmarks: await getBookmarkBarItems() };
+    case MESSAGE_TYPES.GET_URL_MAPPINGS:
+      return { ok: true, mappings: await getUrlMappings() };
+    case MESSAGE_TYPES.SAVE_URL_MAPPING:
+      return { ok: true, mapping: await saveUrlMapping(message.input, message.url) };
+    case MESSAGE_TYPES.UPDATE_URL_MAPPING:
+      return {
+        ok: true,
+        mapping: await updateUrlMapping(
+          message.id,
+          message.input,
+          message.url,
+          message.expectedInput,
+          message.expectedUrl
+        )
+      };
+    case MESSAGE_TYPES.DELETE_URL_MAPPING:
+      await deleteUrlMapping(message.id, message.expectedInput, message.expectedUrl);
+      break;
     case MESSAGE_TYPES.GET_THEME:
       return { ok: true, theme: await getTheme() };
     case MESSAGE_TYPES.GET_UPDATE_STATUS:
@@ -183,7 +208,7 @@ async function ensurePanelInjected(tabId: number): Promise<void> {
 }
 
 async function insertPanelFiles(tabId: number): Promise<void> {
-  if (extensionApi.scripting) {
+  if (hasScriptingPermission() && extensionApi.scripting) {
     await extensionApi.scripting.insertCSS({
       target: { tabId },
       files: ["src/panel.css"]
@@ -199,6 +224,10 @@ async function insertPanelFiles(tabId: number): Promise<void> {
   await tabsApi.insertCSS(tabId, { file: "src/panel.css" });
   await tabsApi.executeScript(tabId, { file: "src/vendor/pinyin-pro.js" });
   await tabsApi.executeScript(tabId, { file: "src/content.js" });
+}
+
+function hasScriptingPermission(): boolean {
+  return extensionApi.runtime.getManifest().permissions?.includes("scripting") ?? false;
 }
 
 async function getCurrentWindowTabs(windowId?: number): Promise<PanelTab[]> {
@@ -224,6 +253,120 @@ async function getBookmarkBarItems(): Promise<PanelBookmark[]> {
   flattenBookmarks(bookmarkBar?.children || [], [], bookmarks);
 
   return bookmarks.sort(compareBookmarkTitle);
+}
+
+async function getUrlMappings(): Promise<UrlMapping[]> {
+  const values = await extensionApi.storage.local.get(URL_MAPPINGS_STORAGE_KEY);
+  return normalizeUrlMappings(values[URL_MAPPINGS_STORAGE_KEY]);
+}
+
+async function saveUrlMapping(rawInput: string, rawUrl: string): Promise<UrlMapping> {
+  const values = validateUrlMappingValues(rawInput, rawUrl);
+  return mutateUrlMappings((mappings) => {
+    assertUniqueUrlMappingInput(mappings, values.input);
+    const mapping = { id: crypto.randomUUID(), ...values };
+    return { mappings: [...mappings, mapping], result: mapping };
+  });
+}
+
+async function updateUrlMapping(
+  id: string,
+  rawInput: string,
+  rawUrl: string,
+  rawExpectedInput: string,
+  rawExpectedUrl: string
+): Promise<UrlMapping> {
+  const values = validateUrlMappingValues(rawInput, rawUrl);
+  const expectedValues = validateUrlMappingValues(rawExpectedInput, rawExpectedUrl);
+  return mutateUrlMappings((mappings) => {
+    const existingMapping = mappings.find((mapping) => mapping.id === id);
+    if (!existingMapping) {
+      throw new Error("This mapping no longer exists. Refresh Settings and try again.");
+    }
+    assertUrlMappingUnchanged(existingMapping, expectedValues);
+
+    assertUniqueUrlMappingInput(mappings, values.input, id);
+    const mapping = { id, ...values };
+    return {
+      mappings: mappings.map((item) => item.id === id ? mapping : item),
+      result: mapping
+    };
+  });
+}
+
+async function deleteUrlMapping(
+  id: string,
+  rawExpectedInput: string,
+  rawExpectedUrl: string
+): Promise<void> {
+  const expectedValues = validateUrlMappingValues(rawExpectedInput, rawExpectedUrl);
+  await mutateUrlMappings((mappings) => {
+    const existingMapping = mappings.find((mapping) => mapping.id === id);
+    if (!existingMapping) {
+      throw new Error("This mapping no longer exists.");
+    }
+    assertUrlMappingUnchanged(existingMapping, expectedValues);
+
+    return {
+      mappings: mappings.filter((mapping) => mapping.id !== id),
+      result: undefined
+    };
+  });
+}
+
+function assertUrlMappingUnchanged(
+  mapping: UrlMapping,
+  expectedValues: Omit<UrlMapping, "id">
+): void {
+  if (mapping.input !== expectedValues.input || mapping.url !== expectedValues.url) {
+    throw new Error(
+      "This mapping changed in another Settings page. Review the latest values and try again."
+    );
+  }
+}
+
+function validateUrlMappingValues(rawInput: string, rawUrl: string): Omit<UrlMapping, "id"> {
+  const input = rawInput.trim();
+  const url = normalizeMappingUrl(rawUrl);
+  if (!input || input.length > 80) {
+    throw new Error("Mapping name must contain 1 to 80 characters.");
+  }
+  if (!url) {
+    throw new Error("Enter a valid http:// or https:// URL.");
+  }
+
+  return { input, url };
+}
+
+function assertUniqueUrlMappingInput(
+  mappings: UrlMapping[],
+  input: string,
+  ignoredId?: string
+): void {
+  if (
+    mappings.some((mapping) =>
+      mapping.id !== ignoredId && mapping.input.toLocaleLowerCase() === input.toLocaleLowerCase()
+    )
+  ) {
+    throw new Error(`“${input}” already has a mapping.`);
+  }
+}
+
+function mutateUrlMappings<T>(
+  mutation: (mappings: UrlMapping[]) => { mappings: UrlMapping[]; result: T }
+): Promise<T> {
+  const operation = urlMappingMutationQueue.then(async () => {
+    const currentMappings = await getUrlMappings();
+    const { mappings, result } = mutation(currentMappings);
+    await extensionApi.storage.local.set({ [URL_MAPPINGS_STORAGE_KEY]: mappings });
+    return result;
+  });
+
+  urlMappingMutationQueue = operation.then(
+    () => undefined,
+    () => undefined
+  );
+  return operation;
 }
 
 async function activateTab(tabId: number | undefined): Promise<void> {
