@@ -18,6 +18,7 @@
   "src/options.html",
   "src/options.ts",
   "src/page-context.ts",
+  "src/url-mappings.ts",
   "src/panel.css",
   "src/pinyin.ts",
   "src/vendor/pinyin-pro.LICENSE",
