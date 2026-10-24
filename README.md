@@ -40,6 +40,7 @@ Every push to `main` runs the GitHub Actions workflow in `.github/workflows/rele
 - Type `theme`, `light`, `dark`, `明亮`, `暗黑`, or related pinyin to show built-in theme commands.
 - Type `newtab`, `copy`, `duplicate tab`, `close tab`, `reload`, `新建标签页`, `复制当前标签页`, `关闭标签页`, `重新加载窗口`, or related pinyin to show tab management commands.
 - Type `ask` to enter Ask mode, or type `ask <question>` to send a question immediately using the current page's visible text. Answers render GitHub-flavored Markdown. Configure the OpenAI-compatible endpoint, model, and API key from the extension's **Options** page first.
+- Run **AI: Translate Page** (search `translate` or `翻译`) to insert a translation below each paragraph, heading, list item, and table cell, using the same AI provider. Content is translated lazily as it scrolls into view, code blocks are skipped, and running the command again removes the translations. Set the target language (default `Simplified Chinese`) on the **Options** page.
 - Enter an `http://`, `https://`, `edge://`, or `chrome://` URL, or a bare domain such as `example.com/path`, to show a bottom action that navigates the current tab directly to that URL (for example, `edge://extensions` or `chrome://extensions`).
 - The extension checks the latest published GitHub release (including pre-releases) every six hours. When local extension files differ from that release, the toolbar icon shows an `UP` badge and the command panel shows an update item linking to the release.
 - Type `help`, `帮助`, `内置命令`, or related pinyin to show all built-in commands.
@@ -62,7 +63,7 @@ The overlay is injected only into normal `http://` and `https://` pages. Browser
 
 Open the extension details page in `edge://extensions`, then select **Extension options**. The default provider is OpenAI with model `gpt-5.4-mini`, and both the API base URL and model can be changed for another OpenAI-compatible service. HTTPS endpoints are required, except for `localhost` and `127.0.0.1` development services.
 
-The API key is stored in `chrome.storage.local` in the current browser profile and is never added to the source bundle. The extension sends the page title, URL, and an excerpt of visible page text only after you submit an Ask question. It does not read form field values. For centrally distributed or production extensions, use a trusted backend relay instead of storing a shared provider key in the extension.
+The API key is stored in `chrome.storage.local` in the current browser profile and is never added to the source bundle. The extension sends the page title, URL, and an excerpt of visible page text only after you submit an Ask question, and sends the visible text segments being translated only while **AI: Translate Page** is active. It does not read form field values. For centrally distributed or production extensions, use a trusted backend relay instead of storing a shared provider key in the extension.
 
 ## Project structure
 
@@ -70,6 +71,7 @@ The API key is stored in `chrome.storage.local` in the current browser profile a
 - `src/messages.ts` defines the shared, validated message protocol and data models used across extension contexts.
 - `src/background.ts` handles the keyboard command, reads tabs, bookmarks, and URL mappings, resolves favicons, persists settings, and opens URLs.
 - `src/content.ts` renders command-panel sections, manages search and keyboard navigation, extracts visible page text, and displays Ask answers.
+- `src/page-translator.ts` splits the page into text blocks, requests translations in batches, and inserts them below the original text.
 - `src/ai-settings.ts` validates and normalizes the shared AI provider configuration.
 - `src/url-mappings.ts` validates and normalizes persistent custom URL mappings.
 - `src/options.ts`, `src/options.html`, and `src/options.css` provide the AI provider and URL mapping settings page.

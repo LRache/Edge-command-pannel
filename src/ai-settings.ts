@@ -3,13 +3,15 @@ export const AI_SETTINGS_STORAGE_KEY = "aiSettings";
 export const DEFAULT_AI_SETTINGS: AiSettings = {
   baseUrl: "https://api.openai.com/v1",
   model: "gpt-5.4-mini",
-  apiKey: ""
+  apiKey: "",
+  translateTargetLanguage: "Simplified Chinese"
 };
 
 export interface AiSettings {
   baseUrl: string;
   model: string;
   apiKey: string;
+  translateTargetLanguage: string;
 }
 
 export function normalizeAiSettings(value: unknown): AiSettings {
@@ -17,7 +19,11 @@ export function normalizeAiSettings(value: unknown): AiSettings {
   return {
     baseUrl: normalizeBaseUrl(settings.baseUrl),
     model: normalizeRequiredString(settings.model, DEFAULT_AI_SETTINGS.model),
-    apiKey: typeof settings.apiKey === "string" ? settings.apiKey.trim() : ""
+    apiKey: typeof settings.apiKey === "string" ? settings.apiKey.trim() : "",
+    translateTargetLanguage: normalizeRequiredString(
+      settings.translateTargetLanguage,
+      DEFAULT_AI_SETTINGS.translateTargetLanguage
+    ).slice(0, 80)
   };
 }
 

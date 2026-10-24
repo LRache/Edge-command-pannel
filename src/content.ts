@@ -1,6 +1,7 @@
 import { buildSearchText, normalizeSearchTerm, normalizeSearchTerms } from "./pinyin";
 import { extractPageContext } from "./page-context";
 import { renderMarkdown } from "./markdown";
+import { createPageTranslator } from "./page-translator";
 import {
   getErrorMessage,
   isPanelRequest,
@@ -40,6 +41,7 @@ type CommandAction =
   | "navigate-current-tab"
   | "open-update-page"
   | "ask-current-page"
+  | "translate-page"
   | "open-ai-settings"
   | "create-url-mapping";
 
@@ -163,6 +165,15 @@ interface RenderOptions {
     },
     {
       type: ITEM_TYPES.COMMAND,
+      id: "translate-page",
+      title: "AI: Translate Page",
+      subtitle: "Show translations below the original text; run again to remove them",
+      iconText: "译",
+      action: "translate-page",
+      aliases: "translate translation bilingual page ai 翻译 翻译页面 双语 对照翻译 fanyi fanyiyemian shuangyu fy"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
       id: "configure-ai",
       title: "AI: Configure Provider",
       subtitle: "Set the OpenAI-compatible endpoint, model, and API key",
@@ -249,6 +260,10 @@ interface RenderOptions {
     pageContext: null,
     pendingMappingName: ""
   };
+
+  const pageTranslator = createPageTranslator((segments) =>
+    sendMessage<{ translations: string[] }>({ type: MESSAGE_TYPES.TRANSLATE_SEGMENTS, segments })
+  );
 
   const searchTextCache = new WeakMap<PanelItem, Map<SearchableField, string>>();
 
@@ -1196,6 +1211,15 @@ interface RenderOptions {
         void submitAskQuestion(command.question);
       }
       return { ok: true, keepOpen: true };
+    }
+
+    if (command.action === "translate-page") {
+      if (pageTranslator.isActive()) {
+        pageTranslator.stop();
+      } else {
+        pageTranslator.start();
+      }
+      return { ok: true };
     }
 
     if (command.action === "open-ai-settings") {

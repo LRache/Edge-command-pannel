@@ -8,8 +8,8 @@ import {
   type ReleaseUpdateStatus,
   type Theme
 } from "./messages";
-import { AI_SETTINGS_STORAGE_KEY, normalizeAiSettings } from "./ai-settings";
-import { requestPageAnswer } from "./ai-client";
+import { AI_SETTINGS_STORAGE_KEY, normalizeAiSettings, type AiSettings } from "./ai-settings";
+import { requestPageAnswer, requestTranslations } from "./ai-client";
 import UPDATE_TRACKED_FILES from "../config/update-tracked-files.json";
 import {
   normalizeMappingUrl,
@@ -152,6 +152,8 @@ async function handleMessage(
       return { ok: true, theme: await setTheme(message.theme) };
     case MESSAGE_TYPES.ASK_PAGE:
       return { ok: true, answer: await askAboutPage(message.question, message.page) };
+    case MESSAGE_TYPES.TRANSLATE_SEGMENTS:
+      return { ok: true, translations: await translateSegments(message.segments) };
     case MESSAGE_TYPES.OPEN_AI_SETTINGS:
       await extensionApi.runtime.openOptionsPage();
       break;
@@ -187,13 +189,21 @@ async function handleMessage(
 }
 
 async function askAboutPage(question: string, page: PageContext): Promise<string> {
+  return requestPageAnswer(await getConfiguredAiSettings(), question, page);
+}
+
+async function translateSegments(segments: string[]): Promise<string[]> {
+  return requestTranslations(await getConfiguredAiSettings(), segments);
+}
+
+async function getConfiguredAiSettings(): Promise<AiSettings> {
   const values = await extensionApi.storage.local.get(AI_SETTINGS_STORAGE_KEY);
   const settings = normalizeAiSettings(values[AI_SETTINGS_STORAGE_KEY]);
   if (!settings.apiKey) {
     throw new Error("AI is not configured. Open AI Settings and add an API key.");
   }
 
-  return requestPageAnswer(settings, question, page);
+  return settings;
 }
 
 async function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {

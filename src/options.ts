@@ -25,6 +25,7 @@ const form = getElement<HTMLFormElement>("ai-settings-form");
 const baseUrlInput = getElement<HTMLInputElement>("base-url");
 const modelInput = getElement<HTMLInputElement>("model");
 const apiKeyInput = getElement<HTMLInputElement>("api-key");
+const translateLanguageInput = getElement<HTMLInputElement>("translate-language");
 const status = getElement<HTMLDivElement>("status");
 const saveButton = getElement<HTMLButtonElement>("save");
 const mappingForm = getElement<HTMLFormElement>("mapping-form");
@@ -77,6 +78,7 @@ async function loadSettings(): Promise<void> {
   baseUrlInput.value = settings.baseUrl;
   modelInput.value = settings.model;
   apiKeyInput.value = settings.apiKey;
+  translateLanguageInput.value = settings.translateTargetLanguage;
 }
 
 async function saveSettings(): Promise<void> {
@@ -87,7 +89,10 @@ async function saveSettings(): Promise<void> {
     const settings: AiSettings = {
       baseUrl: normalizeBaseUrl(baseUrlInput.value),
       model: modelInput.value.trim(),
-      apiKey: apiKeyInput.value.trim()
+      apiKey: apiKeyInput.value.trim(),
+      translateTargetLanguage:
+        translateLanguageInput.value.trim().slice(0, 80) ||
+        DEFAULT_AI_SETTINGS.translateTargetLanguage
     };
     if (!settings.model) {
       throw new Error("Model is required.");

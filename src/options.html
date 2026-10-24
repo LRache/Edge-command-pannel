@@ -18,7 +18,7 @@
 
       <section class="settings-section" aria-labelledby="ai-settings-title">
         <h2 id="ai-settings-title">AI provider</h2>
-        <p class="section-description">Configure an OpenAI-compatible service for the <code>ask</code> command.</p>
+        <p class="section-description">Configure an OpenAI-compatible service for the <code>ask</code> and <code>translate</code> commands.</p>
         <form id="ai-settings-form">
           <label for="base-url">API base URL</label>
           <input id="base-url" name="base-url" type="url" required spellcheck="false">
@@ -31,8 +31,12 @@
           <input id="api-key" name="api-key" type="password" required autocomplete="off" spellcheck="false">
           <p class="hint">
             The key is stored in this browser profile. Page text is sent only when you submit an
-            <code>ask</code> question.
+            <code>ask</code> question or run <code>translate</code>.
           </p>
+
+          <label for="translate-language">Translation target language</label>
+          <input id="translate-language" name="translate-language" type="text" maxlength="80" spellcheck="false" placeholder="Simplified Chinese">
+          <p class="hint">Used by the <code>translate</code> command, for example <code>Simplified Chinese</code>, <code>English</code>, or <code>日本語</code>.</p>
 
           <div class="actions">
             <button id="save" type="submit">Save AI settings</button>

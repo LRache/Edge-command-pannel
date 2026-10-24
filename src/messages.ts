@@ -11,6 +11,7 @@ export const MESSAGE_TYPES = {
   GET_UPDATE_STATUS: "GET_UPDATE_STATUS",
   SET_THEME: "SET_THEME",
   ASK_PAGE: "ASK_PAGE",
+  TRANSLATE_SEGMENTS: "TRANSLATE_SEGMENTS",
   OPEN_AI_SETTINGS: "OPEN_AI_SETTINGS",
   NEW_TAB: "NEW_TAB",
   COPY_CURRENT_TAB: "COPY_CURRENT_TAB",
@@ -23,6 +24,9 @@ export const MESSAGE_TYPES = {
 } as const;
 
 export const MAX_ASK_QUESTION_LENGTH = 2_000;
+export const MAX_TRANSLATE_SEGMENTS = 40;
+export const MAX_TRANSLATE_SEGMENT_LENGTH = 4_000;
+export const MAX_TRANSLATE_BATCH_LENGTH = 12_000;
 
 export type Theme = "light" | "dark";
 
@@ -83,6 +87,7 @@ export type PanelRequest =
   | { type: typeof MESSAGE_TYPES.GET_UPDATE_STATUS }
   | { type: typeof MESSAGE_TYPES.SET_THEME; theme: Theme }
   | { type: typeof MESSAGE_TYPES.ASK_PAGE; question: string; page: PageContext }
+  | { type: typeof MESSAGE_TYPES.TRANSLATE_SEGMENTS; segments: string[] }
   | { type: typeof MESSAGE_TYPES.OPEN_AI_SETTINGS }
   | { type: typeof MESSAGE_TYPES.NEW_TAB }
   | { type: typeof MESSAGE_TYPES.COPY_CURRENT_TAB }
@@ -120,6 +125,8 @@ export function isPanelRequest(value: unknown): value is PanelRequest {
       return typeof value.url === "string";
     case MESSAGE_TYPES.ASK_PAGE:
       return isValidAskPageRequest(value);
+    case MESSAGE_TYPES.TRANSLATE_SEGMENTS:
+      return isValidTranslateSegments(value.segments);
     case MESSAGE_TYPES.ACTIVATE_TAB:
     case MESSAGE_TYPES.CLOSE_TAB:
       return Number.isInteger(value.tabId);
@@ -171,6 +178,22 @@ function isValidAskPageRequest(value: Record<string, unknown>): boolean {
     value.page.text.length <= 60_100 &&
     typeof value.page.truncated === "boolean"
   );
+}
+
+function isValidTranslateSegments(value: unknown): value is string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_TRANSLATE_SEGMENTS) {
+    return false;
+  }
+
+  let totalLength = 0;
+  for (const segment of value) {
+    if (typeof segment !== "string" || segment.length > MAX_TRANSLATE_SEGMENT_LENGTH) {
+      return false;
+    }
+    totalLength += segment.length;
+  }
+
+  return totalLength <= MAX_TRANSLATE_BATCH_LENGTH;
 }
 
 export function getErrorMessage(error: unknown, fallback = "Unexpected error."): string {
