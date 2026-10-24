@@ -898,11 +898,30 @@ interface RenderOptions {
     body.append(title, url);
     option.append(icon, body);
 
-    if (item.type === ITEM_TYPES.TAB && item.active) {
-      const active = document.createElement("span");
-      active.className = "ecp-active";
-      active.textContent = "Active";
-      option.append(active);
+    if (item.type === ITEM_TYPES.TAB) {
+      const actions = document.createElement("span");
+      actions.className = "ecp-item-actions";
+
+      if (item.active) {
+        const active = document.createElement("span");
+        active.className = "ecp-active";
+        active.textContent = "Active";
+        actions.append(active);
+      }
+
+      const close = document.createElement("span");
+      close.className = "ecp-close";
+      close.setAttribute("role", "button");
+      close.setAttribute("aria-label", "Close tab");
+      close.title = "Close tab (Delete)";
+      close.textContent = "×";
+      close.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void closeTabItem(item);
+      });
+      actions.append(close);
+      option.append(actions);
     }
 
     return option;
@@ -991,6 +1010,15 @@ interface RenderOptions {
       return;
     }
 
+    if (event.key === "Delete") {
+      const selected = state.visibleItems[state.selectedIndex];
+      if (selected?.type === ITEM_TYPES.TAB) {
+        event.preventDefault();
+        void closeTabItem(selected);
+      }
+      return;
+    }
+
     if (event.key === "Enter") {
       event.preventDefault();
       selectItem(state.selectedIndex);
@@ -1058,6 +1086,33 @@ interface RenderOptions {
       type: MESSAGE_TYPES.ACTIVATE_TAB,
       tabId: tab.id
     });
+  }
+
+  async function closeTabItem(tab: TabItem): Promise<void> {
+    if (!tab?.id) {
+      setStatus("Invalid tab.");
+      return;
+    }
+
+    setStatus(`Closing ${tab.title || "tab"}...`);
+    const response = await sendMessage({ type: MESSAGE_TYPES.CLOSE_TAB, tabId: tab.id });
+    if (!response?.ok) {
+      setStatus(response?.error || "Unable to close tab.");
+      return;
+    }
+
+    const removedVisibleIndex = state.visibleItems.findIndex(
+      (item) => item.type === ITEM_TYPES.TAB && item.id === tab.id
+    );
+    state.sections[ITEM_TYPES.TAB] = state.sections[ITEM_TYPES.TAB].filter(
+      (item) => item.id !== tab.id
+    );
+    applyFilter(ensurePanel().input.value);
+    if (removedVisibleIndex >= 0 && state.selectedIndex > removedVisibleIndex) {
+      state.selectedIndex = Math.max(0, state.selectedIndex - 1);
+    }
+    syncSelectedItem();
+    setStatus(`Closed ${tab.title || "tab"}.`);
   }
 
   async function openBookmark(bookmark: BookmarkItem): Promise<ActionResponse> {

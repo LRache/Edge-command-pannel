@@ -15,6 +15,7 @@ export const MESSAGE_TYPES = {
   NEW_TAB: "NEW_TAB",
   COPY_CURRENT_TAB: "COPY_CURRENT_TAB",
   CLOSE_CURRENT_TAB: "CLOSE_CURRENT_TAB",
+  CLOSE_TAB: "CLOSE_TAB",
   RELOAD_CURRENT_TAB: "RELOAD_CURRENT_TAB",
   NAVIGATE_CURRENT_TAB: "NAVIGATE_CURRENT_TAB",
   ACTIVATE_TAB: "ACTIVATE_TAB",
@@ -89,6 +90,7 @@ export type PanelRequest =
   | { type: typeof MESSAGE_TYPES.RELOAD_CURRENT_TAB }
   | { type: typeof MESSAGE_TYPES.NAVIGATE_CURRENT_TAB; url: string }
   | { type: typeof MESSAGE_TYPES.ACTIVATE_TAB; tabId: number }
+  | { type: typeof MESSAGE_TYPES.CLOSE_TAB; tabId: number }
   | { type: typeof MESSAGE_TYPES.OPEN_BOOKMARK; url: string };
 
 export type MessageResponse<T extends object = Record<string, never>> =
@@ -119,6 +121,7 @@ export function isPanelRequest(value: unknown): value is PanelRequest {
     case MESSAGE_TYPES.ASK_PAGE:
       return isValidAskPageRequest(value);
     case MESSAGE_TYPES.ACTIVATE_TAB:
+    case MESSAGE_TYPES.CLOSE_TAB:
       return Number.isInteger(value.tabId);
     default:
       return Object.values(MESSAGE_TYPES).some((type) => type === value.type);

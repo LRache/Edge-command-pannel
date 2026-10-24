@@ -173,6 +173,9 @@ async function handleMessage(
     case MESSAGE_TYPES.ACTIVATE_TAB:
       await activateTab(message.tabId);
       break;
+    case MESSAGE_TYPES.CLOSE_TAB:
+      await closeTab(message.tabId);
+      break;
     case MESSAGE_TYPES.OPEN_BOOKMARK:
       await openBookmark(message.url, sender.tab?.windowId);
       break;
@@ -431,6 +434,14 @@ async function copyCurrentTab(tabId?: number, windowId?: number): Promise<void> 
 async function closeCurrentTab(tabId?: number): Promise<void> {
   if (!isInteger(tabId)) {
     throw new Error("Invalid current tab.");
+  }
+
+  await extensionApi.tabs.remove(tabId);
+}
+
+async function closeTab(tabId: number): Promise<void> {
+  if (!isInteger(tabId)) {
+    throw new Error("Invalid tab id.");
   }
 
   await extensionApi.tabs.remove(tabId);

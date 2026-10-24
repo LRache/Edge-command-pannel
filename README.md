@@ -47,6 +47,7 @@ Every push to `main` runs the GitHub Actions workflow in `.github/workflows/rele
 - A custom mapping is shown above other result types. An exact input match ranks first, so pressing `Enter` opens its URL in a new active tab.
 - Press `ArrowDown` or `ArrowUp` to move through results.
 - Press `Enter` to activate the selected tab, open the selected bookmark, run a command, or navigate to the entered URL.
+- Each tab row shows a close button (×) on hover or when selected; click it to close that tab without leaving the panel. Press `Delete` (`Fn+Delete` on macOS) to close the currently selected tab. The panel stays open so you can close several tabs in a row.
 - Press `Escape` or click outside the panel to close it.
 
 The shortcut can be changed from `edge://extensions/shortcuts`.
