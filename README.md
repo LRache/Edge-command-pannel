@@ -63,6 +63,12 @@ The overlay is injected only into normal `http://` and `https://` pages. Browser
 
 Open the extension details page in `edge://extensions`, then select **Extension options**. The default provider is OpenAI with model `gpt-5.4-mini`, and both the API base URL and model can be changed for another OpenAI-compatible service. HTTPS endpoints are required, except for `localhost` and `127.0.0.1` development services.
 
+Optional custom request headers can be added in the same form, one `Name: value` per line. The `{{session}}` placeholder is replaced with a random ID that stays the same for one Ask conversation (until you leave Ask mode) or one page translation (until it is removed). For [OpenCode Go](https://opencode.ai/v2/docs/console/go/), set the API base URL to `https://opencode.ai/inference/go/openai/v1` and add:
+
+```
+x-opencode-session: {{session}}
+```
+
 The API key is stored in `chrome.storage.local` in the current browser profile and is never added to the source bundle. The extension sends the page title, URL, and an excerpt of visible page text only after you submit an Ask question, and sends the visible text segments being translated only while **AI: Translate Page** is active. It does not read form field values. For centrally distributed or production extensions, use a trusted backend relay instead of storing a shared provider key in the extension.
 
 ## Project structure

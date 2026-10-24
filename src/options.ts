@@ -1,9 +1,11 @@
 import {
   AI_SETTINGS_STORAGE_KEY,
   DEFAULT_AI_SETTINGS,
+  formatHeaderLines,
   getOriginPattern,
   normalizeAiSettings,
   normalizeBaseUrl,
+  parseHeaderLines,
   type AiSettings
 } from "./ai-settings";
 import {
@@ -26,6 +28,7 @@ const baseUrlInput = getElement<HTMLInputElement>("base-url");
 const modelInput = getElement<HTMLInputElement>("model");
 const apiKeyInput = getElement<HTMLInputElement>("api-key");
 const translateLanguageInput = getElement<HTMLInputElement>("translate-language");
+const customHeadersInput = getElement<HTMLTextAreaElement>("custom-headers");
 const status = getElement<HTMLDivElement>("status");
 const saveButton = getElement<HTMLButtonElement>("save");
 const mappingForm = getElement<HTMLFormElement>("mapping-form");
@@ -79,6 +82,7 @@ async function loadSettings(): Promise<void> {
   modelInput.value = settings.model;
   apiKeyInput.value = settings.apiKey;
   translateLanguageInput.value = settings.translateTargetLanguage;
+  customHeadersInput.value = formatHeaderLines(settings.headers);
 }
 
 async function saveSettings(): Promise<void> {
@@ -92,7 +96,8 @@ async function saveSettings(): Promise<void> {
       apiKey: apiKeyInput.value.trim(),
       translateTargetLanguage:
         translateLanguageInput.value.trim().slice(0, 80) ||
-        DEFAULT_AI_SETTINGS.translateTargetLanguage
+        DEFAULT_AI_SETTINGS.translateTargetLanguage,
+      headers: parseHeaderLines(customHeadersInput.value)
     };
     if (!settings.model) {
       throw new Error("Model is required.");

@@ -38,6 +38,14 @@
           <input id="translate-language" name="translate-language" type="text" maxlength="80" spellcheck="false" placeholder="Simplified Chinese">
           <p class="hint">Used by the <code>translate</code> command, for example <code>Simplified Chinese</code>, <code>English</code>, or <code>日本語</code>.</p>
 
+          <label for="custom-headers">Custom request headers</label>
+          <textarea id="custom-headers" name="custom-headers" rows="3" spellcheck="false" placeholder="x-opencode-session: {{session}}"></textarea>
+          <p class="hint">
+            Optional. One <code>Name: value</code> per line, sent with every AI request.
+            <code>{{session}}</code> is replaced with an ID that stays the same for one Ask conversation
+            or one page translation, which providers such as OpenCode Go use for routing and prompt caching.
+          </p>
+
           <div class="actions">
             <button id="save" type="submit">Save AI settings</button>
             <div id="status" role="status" aria-live="polite"></div>

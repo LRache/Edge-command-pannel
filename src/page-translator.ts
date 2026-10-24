@@ -1,4 +1,5 @@
 import {
+  createSessionId,
   MAX_TRANSLATE_BATCH_LENGTH,
   MAX_TRANSLATE_SEGMENT_LENGTH,
   MAX_TRANSLATE_SEGMENTS,
@@ -6,7 +7,8 @@ import {
 } from "./messages";
 
 export type TranslateRequest = (
-  segments: string[]
+  segments: string[],
+  sessionId: string
 ) => Promise<MessageResponse<{ translations: string[] }>>;
 
 export interface PageTranslator {
@@ -56,6 +58,8 @@ interface Segment {
 export function createPageTranslator(translate: TranslateRequest): PageTranslator {
   let active = false;
   let generation = 0;
+  // One session per translation run, so every batch shares upstream routing and prompt caching.
+  let sessionId = "";
   let intersectionObserver: IntersectionObserver | null = null;
   let mutationObserver: MutationObserver | null = null;
   let flushTimer = 0;
@@ -74,6 +78,7 @@ export function createPageTranslator(translate: TranslateRequest): PageTranslato
 
     active = true;
     generation += 1;
+    sessionId = createSessionId();
     translatedCount = 0;
     failedCount = 0;
     intersectionObserver = new IntersectionObserver(handleIntersection, {
@@ -201,7 +206,10 @@ export function createPageTranslator(translate: TranslateRequest): PageTranslato
     updateProgress();
 
     try {
-      const response = await translate(batch.map((segment) => segment.text));
+      const response = await translate(
+        batch.map((segment) => segment.text),
+        sessionId
+      );
       if (batchGeneration !== generation) {
         return;
       }

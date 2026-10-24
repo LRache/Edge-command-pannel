@@ -1,11 +1,12 @@
 import OpenAI from "openai";
-import type { AiSettings } from "./ai-settings";
+import { resolveHeaders, type AiSettings } from "./ai-settings";
 import type { PageContext } from "./messages";
 
-function createClient(settings: AiSettings, timeout = 45_000): OpenAI {
+function createClient(settings: AiSettings, sessionId?: string, timeout = 45_000): OpenAI {
   return new OpenAI({
     apiKey: settings.apiKey,
     baseURL: settings.baseUrl,
+    defaultHeaders: resolveHeaders(settings.headers, sessionId),
     dangerouslyAllowBrowser: true,
     maxRetries: 1,
     timeout
@@ -15,9 +16,10 @@ function createClient(settings: AiSettings, timeout = 45_000): OpenAI {
 export async function requestPageAnswer(
   settings: AiSettings,
   question: string,
-  page: PageContext
+  page: PageContext,
+  sessionId?: string
 ): Promise<string> {
-  const client = createClient(settings);
+  const client = createClient(settings, sessionId);
   const truncationNote = page.truncated
     ? "The page excerpt was shortened because the page is long. Say when the missing portion may affect the answer."
     : "The supplied text is the available visible page text.";
@@ -61,9 +63,10 @@ export async function requestPageAnswer(
 
 export async function requestTranslations(
   settings: AiSettings,
-  segments: string[]
+  segments: string[],
+  sessionId?: string
 ): Promise<string[]> {
-  const client = createClient(settings, 90_000);
+  const client = createClient(settings, sessionId, 90_000);
   const targetLanguage = settings.translateTargetLanguage;
   const completion = await client.chat.completions.create({
     model: settings.model,

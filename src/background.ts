@@ -151,9 +151,15 @@ async function handleMessage(
     case MESSAGE_TYPES.SET_THEME:
       return { ok: true, theme: await setTheme(message.theme) };
     case MESSAGE_TYPES.ASK_PAGE:
-      return { ok: true, answer: await askAboutPage(message.question, message.page) };
+      return {
+        ok: true,
+        answer: await askAboutPage(message.question, message.page, message.sessionId)
+      };
     case MESSAGE_TYPES.TRANSLATE_SEGMENTS:
-      return { ok: true, translations: await translateSegments(message.segments) };
+      return {
+        ok: true,
+        translations: await translateSegments(message.segments, message.sessionId)
+      };
     case MESSAGE_TYPES.OPEN_AI_SETTINGS:
       await extensionApi.runtime.openOptionsPage();
       break;
@@ -188,12 +194,16 @@ async function handleMessage(
   return { ok: true };
 }
 
-async function askAboutPage(question: string, page: PageContext): Promise<string> {
-  return requestPageAnswer(await getConfiguredAiSettings(), question, page);
+async function askAboutPage(
+  question: string,
+  page: PageContext,
+  sessionId?: string
+): Promise<string> {
+  return requestPageAnswer(await getConfiguredAiSettings(), question, page, sessionId);
 }
 
-async function translateSegments(segments: string[]): Promise<string[]> {
-  return requestTranslations(await getConfiguredAiSettings(), segments);
+async function translateSegments(segments: string[], sessionId?: string): Promise<string[]> {
+  return requestTranslations(await getConfiguredAiSettings(), segments, sessionId);
 }
 
 async function getConfiguredAiSettings(): Promise<AiSettings> {

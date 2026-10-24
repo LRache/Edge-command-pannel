@@ -86,8 +86,17 @@ export type PanelRequest =
   | { type: typeof MESSAGE_TYPES.GET_THEME }
   | { type: typeof MESSAGE_TYPES.GET_UPDATE_STATUS }
   | { type: typeof MESSAGE_TYPES.SET_THEME; theme: Theme }
-  | { type: typeof MESSAGE_TYPES.ASK_PAGE; question: string; page: PageContext }
-  | { type: typeof MESSAGE_TYPES.TRANSLATE_SEGMENTS; segments: string[] }
+  | {
+      type: typeof MESSAGE_TYPES.ASK_PAGE;
+      question: string;
+      page: PageContext;
+      sessionId?: string | undefined;
+    }
+  | {
+      type: typeof MESSAGE_TYPES.TRANSLATE_SEGMENTS;
+      segments: string[];
+      sessionId?: string | undefined;
+    }
   | { type: typeof MESSAGE_TYPES.OPEN_AI_SETTINGS }
   | { type: typeof MESSAGE_TYPES.NEW_TAB }
   | { type: typeof MESSAGE_TYPES.COPY_CURRENT_TAB }
@@ -124,9 +133,11 @@ export function isPanelRequest(value: unknown): value is PanelRequest {
     case MESSAGE_TYPES.OPEN_BOOKMARK:
       return typeof value.url === "string";
     case MESSAGE_TYPES.ASK_PAGE:
-      return isValidAskPageRequest(value);
+      return isValidAskPageRequest(value) && isValidOptionalSessionId(value.sessionId);
     case MESSAGE_TYPES.TRANSLATE_SEGMENTS:
-      return isValidTranslateSegments(value.segments);
+      return (
+        isValidTranslateSegments(value.segments) && isValidOptionalSessionId(value.sessionId)
+      );
     case MESSAGE_TYPES.ACTIVATE_TAB:
     case MESSAGE_TYPES.CLOSE_TAB:
       return Number.isInteger(value.tabId);
@@ -178,6 +189,21 @@ function isValidAskPageRequest(value: Record<string, unknown>): boolean {
     value.page.text.length <= 60_100 &&
     typeof value.page.truncated === "boolean"
   );
+}
+
+const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** Creates a random UUID v4. crypto.randomUUID is unavailable on insecure (http) pages. */
+export function createSessionId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function isValidOptionalSessionId(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && SESSION_ID_PATTERN.test(value));
 }
 
 function isValidTranslateSegments(value: unknown): value is string[] {

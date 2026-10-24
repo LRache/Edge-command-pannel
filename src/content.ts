@@ -3,6 +3,7 @@ import { extractPageContext } from "./page-context";
 import { renderMarkdown } from "./markdown";
 import { createPageTranslator } from "./page-translator";
 import {
+  createSessionId,
   getErrorMessage,
   isPanelRequest,
   MAX_ASK_QUESTION_LENGTH,
@@ -103,6 +104,7 @@ interface PanelState {
   asking: boolean;
   askRequestId: number;
   pageContext: PageContext | null;
+  askSessionId: string | null;
   pendingMappingName: string;
 }
 
@@ -258,11 +260,16 @@ interface RenderOptions {
     asking: false,
     askRequestId: 0,
     pageContext: null,
+    askSessionId: null,
     pendingMappingName: ""
   };
 
-  const pageTranslator = createPageTranslator((segments) =>
-    sendMessage<{ translations: string[] }>({ type: MESSAGE_TYPES.TRANSLATE_SEGMENTS, segments })
+  const pageTranslator = createPageTranslator((segments, sessionId) =>
+    sendMessage<{ translations: string[] }>({
+      type: MESSAGE_TYPES.TRANSLATE_SEGMENTS,
+      segments,
+      sessionId
+    })
   );
 
   const searchTextCache = new WeakMap<PanelItem, Map<SearchableField, string>>();
@@ -301,6 +308,7 @@ interface RenderOptions {
     state.mode = "search";
     state.asking = false;
     state.pageContext = null;
+    state.askSessionId = null;
     state.pendingMappingName = "";
     state.askRequestId += 1;
     elements.input.value = "";
@@ -1402,6 +1410,7 @@ interface RenderOptions {
     state.mode = "ask";
     state.asking = false;
     state.pageContext = extractPageContext(document);
+    state.askSessionId = createSessionId();
     state.visibleItems = [];
     state.selectedIndex = 0;
 
@@ -1425,6 +1434,7 @@ interface RenderOptions {
     state.mode = "search";
     state.asking = false;
     state.pageContext = null;
+    state.askSessionId = null;
     const input = ensurePanel().input;
     input.value = "";
     configureInputForMode();
@@ -1465,7 +1475,8 @@ interface RenderOptions {
       const response = await sendMessage<{ answer: string }>({
         type: MESSAGE_TYPES.ASK_PAGE,
         question,
-        page
+        page,
+        sessionId: state.askSessionId ?? undefined
       });
       if (requestId !== state.askRequestId || state.mode !== "ask") {
         return;
