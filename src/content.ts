@@ -17,6 +17,12 @@ import {
   type Theme
 } from "./messages";
 import type { UrlMapping } from "./url-mappings";
+import {
+  EYE_CARE_DOMAINS_STORAGE_KEY,
+  isEyeCareDomainMatch,
+  normalizeEyeCareDomain,
+  normalizeEyeCareDomains
+} from "./eye-care";
 
 const extensionApi = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser ?? chrome;
 
@@ -35,6 +41,7 @@ type ItemType = (typeof ITEM_TYPES)[keyof typeof ITEM_TYPES];
 type CommandAction =
   | "show-built-in-commands"
   | "toggle-transparent-panel"
+  | "toggle-eye-care"
   | "new-tab"
   | "close-current-tab"
   | "copy-current-tab"
@@ -155,6 +162,15 @@ interface RenderOptions {
       iconText: "A",
       action: "toggle-transparent-panel",
       aliases: "panel transparent translucent opacity acrylic glass blur solid toggle 透明 半透明 毛玻璃 面板 关闭透明 touming bantouming maoboli mianban"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "eye-care-toggle-site",
+      title: "Eye Care: Toggle for This Site",
+      subtitle: "Apply a warm, low blue light tint to every page on this domain",
+      iconText: "护",
+      action: "toggle-eye-care",
+      aliases: "eye care eyecare protect night warm filter blue light reading mode site domain 护眼 护眼模式 夜间 暖色 蓝光 阅读模式 huyan huyanmoshi hy nuanse languang"
     },
     {
       type: ITEM_TYPES.COMMAND,
@@ -1212,6 +1228,15 @@ interface RenderOptions {
       return { ok: true, keepOpen: true };
     }
 
+    if (command.action === "toggle-eye-care") {
+      const enabled = await toggleEyeCareForCurrentSite();
+      if (enabled === null) {
+        return { ok: false, error: "Eye care is not available on this page." };
+      }
+      setStatus(`Eye care ${enabled ? "enabled" : "disabled"} for ${location.hostname}.`);
+      return { ok: true, keepOpen: true };
+    }
+
     if (command.action === "ask-current-page") {
       enterAskMode();
       if (command.question) {
@@ -1256,6 +1281,24 @@ interface RenderOptions {
     }
 
     return response;
+  }
+
+  /** Returns whether eye care is enabled for the current host after toggling, or null if unsupported. */
+  async function toggleEyeCareForCurrentSite(): Promise<boolean | null> {
+    const hostname = location.hostname;
+    const domain = normalizeEyeCareDomain(hostname.replace(/^www\./, ""));
+    if (!domain) {
+      return null;
+    }
+
+    const values = await extensionApi.storage.local.get(EYE_CARE_DOMAINS_STORAGE_KEY);
+    const domains = normalizeEyeCareDomains(values[EYE_CARE_DOMAINS_STORAGE_KEY]);
+    const remaining = domains.filter((entry) => !isEyeCareDomainMatch(hostname, entry));
+    const enabled = remaining.length === domains.length;
+    await extensionApi.storage.local.set({
+      [EYE_CARE_DOMAINS_STORAGE_KEY]: enabled ? [...domains, domain] : remaining
+    });
+    return enabled;
   }
 
   function enterMappingMode(): void {

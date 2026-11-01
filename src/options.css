@@ -153,18 +153,21 @@ button[hidden] {
 
 #status,
 #mapping-status,
+#eye-care-status,
 #mapping-count {
   color: #616b7b;
   font-size: 13px;
 }
 
 #status[data-kind="success"],
-#mapping-status[data-kind="success"] {
+#mapping-status[data-kind="success"],
+#eye-care-status[data-kind="success"] {
   color: #157347;
 }
 
 #status[data-kind="error"],
-#mapping-status[data-kind="error"] {
+#mapping-status[data-kind="error"],
+#eye-care-status[data-kind="error"] {
   color: #b42318;
 }
 
@@ -269,6 +272,7 @@ button[hidden] {
   .hint,
   #status,
   #mapping-status,
+  #eye-care-status,
   #mapping-count,
   .empty {
     color: #a9afba;

@@ -19,6 +19,7 @@ await build({
   entryPoints: {
     "src/background": resolve(projectRoot, "src/background.ts"),
     "src/content": resolve(projectRoot, "src/content.ts"),
+    "src/eye-care-content": resolve(projectRoot, "src/eye-care-content.ts"),
     "src/options": resolve(projectRoot, "src/options.ts")
   },
   bundle: true,

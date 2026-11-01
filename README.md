@@ -41,6 +41,7 @@ Every push to `main` runs the GitHub Actions workflow in `.github/workflows/rele
 - Type `newtab`, `copy`, `duplicate tab`, `close tab`, `reload`, `新建标签页`, `复制当前标签页`, `关闭标签页`, `重新加载窗口`, or related pinyin to show tab management commands.
 - Type `ask` to enter Ask mode, or type `ask <question>` to send a question immediately using the current page's visible text. Answers render GitHub-flavored Markdown. Configure the OpenAI-compatible endpoint, model, and API key from the extension's **Options** page first.
 - Run **AI: Translate Page** (search `translate` or `翻译`) to insert a translation below each paragraph, heading, list item, and table cell, using the same AI provider. Content is translated lazily as it scrolls into view, code blocks are skipped, and running the command again removes the translations. Set the target language (default `Simplified Chinese`) on the **Options** page.
+- Run **Eye Care: Toggle for This Site** (search `eye care`, `护眼`, or `huyan`) to apply a warm, low blue light tint to the current domain; run it again to turn it off. The setting is remembered per domain (a domain also covers its subdomains) and applied as each page starts loading. The domain list can also be edited on the **Options** page.
 - Enter an `http://`, `https://`, `edge://`, or `chrome://` URL, or a bare domain such as `example.com/path`, to show a bottom action that navigates the current tab directly to that URL (for example, `edge://extensions` or `chrome://extensions`).
 - The extension checks the latest published GitHub release (including pre-releases) every six hours. When local extension files differ from that release, the toolbar icon shows an `UP` badge and the command panel shows an update item linking to the release.
 - Type `help`, `帮助`, `内置命令`, or related pinyin to show all built-in commands.
@@ -77,6 +78,7 @@ The API key is stored in `chrome.storage.local` in the current browser profile a
 - `src/messages.ts` defines the shared, validated message protocol and data models used across extension contexts.
 - `src/background.ts` handles the keyboard command, reads tabs, bookmarks, and URL mappings, resolves favicons, persists settings, and opens URLs.
 - `src/content.ts` renders command-panel sections, manages search and keyboard navigation, extracts visible page text, and displays Ask answers.
+- `src/eye-care.ts` stores and matches eye care domains; `src/eye-care-content.ts` is a `document_start` content script that applies the tint on matching sites.
 - `src/page-translator.ts` splits the page into text blocks, requests translations in batches, and inserts them below the original text.
 - `src/ai-settings.ts` validates and normalizes the shared AI provider configuration.
 - `src/url-mappings.ts` validates and normalizes persistent custom URL mappings.

@@ -12,6 +12,8 @@
   "src/ai-client.ts",
   "src/ai-settings.ts",
   "src/content.ts",
+  "src/eye-care.ts",
+  "src/eye-care-content.ts",
   "src/markdown.ts",
   "src/messages.ts",
   "src/options.css",
