@@ -43,7 +43,11 @@ const SKIP_ANCESTOR_SELECTOR = [
   ".ecp-translate-toast"
 ].join(", ");
 const SKIP_TEXT_SELECTOR = "script, style, noscript, template, svg, .ecp-translation";
+// Inline code and notranslate spans stay in the sentence they belong to; only content that is
+// private or not shown to the reader is dropped from a segment's text.
+const SKIP_DESCENDANT_SELECTOR = `${SKIP_TEXT_SELECTOR}, textarea, input, select, option`;
 const TRANSLATION_CLASS = "ecp-translation";
+const OWN_NODE_SELECTOR = `.${TRANSLATION_CLASS}, .ecp-root, .ecp-translate-toast`;
 const STATE_ATTRIBUTE = "data-ecp-translate";
 const MAX_CONCURRENT_REQUESTS = 3;
 const FLUSH_DELAY_MS = 120;
@@ -68,7 +72,9 @@ export function createPageTranslator(translate: TranslateRequest): PageTranslato
   let translatedCount = 0;
   let failedCount = 0;
   const queue: Segment[] = [];
-  const segments = new WeakMap<HTMLElement, Segment>();
+  const segments = new WeakMap<HTMLElement, Segment[]>();
+  // Scanned elements whose source content changed; they are re-segmented on the next rescan.
+  const dirty = new Set<HTMLElement>();
   const toast = createToast();
 
   function start(): void {
@@ -85,7 +91,7 @@ export function createPageTranslator(translate: TranslateRequest): PageTranslato
       rootMargin: "800px 0px"
     });
     mutationObserver = new MutationObserver(scheduleRescan);
-    mutationObserver.observe(document.body, { childList: true, subtree: true });
+    mutationObserver.observe(document.body, { childList: true, characterData: true, subtree: true });
     const found = scan();
     toast.show(found > 0 ? "Translating page…" : "Nothing to translate on this page.");
     if (found === 0) {
@@ -103,6 +109,7 @@ export function createPageTranslator(translate: TranslateRequest): PageTranslato
     window.clearTimeout(flushTimer);
     window.clearTimeout(rescanTimer);
     queue.length = 0;
+    dirty.clear();
     inFlight = 0;
     document.querySelectorAll(`.${TRANSLATION_CLASS}`).forEach((node) => node.remove());
     document
@@ -119,13 +126,13 @@ export function createPageTranslator(translate: TranslateRequest): PageTranslato
         continue;
       }
 
-      const segment = createSegment(element);
-      element.setAttribute(STATE_ATTRIBUTE, segment ? "pending" : "skip");
-      if (!segment) {
+      const elementSegments = createSegments(element);
+      element.setAttribute(STATE_ATTRIBUTE, elementSegments.length > 0 ? "pending" : "skip");
+      if (elementSegments.length === 0) {
         continue;
       }
 
-      segments.set(element, segment);
+      segments.set(element, elementSegments);
       intersectionObserver?.observe(element);
       found += 1;
     }
@@ -134,25 +141,81 @@ export function createPageTranslator(translate: TranslateRequest): PageTranslato
   }
 
   function scheduleRescan(records: MutationRecord[]): void {
-    const hasForeignChange = records.some((record) =>
-      [...record.addedNodes].some(
-        (node) =>
-          node instanceof HTMLElement &&
-          !node.classList.contains(TRANSLATION_CLASS) &&
-          !node.classList.contains("ecp-root") &&
-          !node.classList.contains("ecp-translate-toast")
-      )
-    );
+    let hasForeignChange = false;
+    for (const record of records) {
+      const target =
+        record.target instanceof Element ? record.target : record.target.parentElement;
+      if (!target || target.closest(OWN_NODE_SELECTOR)) {
+        continue;
+      }
+      if (
+        record.type === "childList" &&
+        [...record.addedNodes, ...record.removedNodes].every(isOwnNode)
+      ) {
+        continue;
+      }
+
+      hasForeignChange = true;
+      const owner = target.closest<HTMLElement>(`[${STATE_ATTRIBUTE}]`);
+      if (owner) {
+        dirty.add(owner);
+      }
+    }
     if (!hasForeignChange) {
       return;
     }
 
     window.clearTimeout(rescanTimer);
     rescanTimer = window.setTimeout(() => {
-      if (active) {
-        scan();
+      if (!active) {
+        return;
       }
+
+      dirty.forEach((element) => {
+        if (hasSourceChanged(element)) {
+          invalidate(element);
+        }
+      });
+      dirty.clear();
+      scan();
     }, RESCAN_DELAY_MS);
+  }
+
+  /** Drops an element's segments and translations so the next scan reads its current content. */
+  function invalidate(element: HTMLElement): void {
+    intersectionObserver?.unobserve(element);
+    segments.delete(element);
+    element.removeAttribute(STATE_ATTRIBUTE);
+    element
+      .querySelectorAll(`:scope > .${TRANSLATION_CLASS}`)
+      .forEach((node) => node.remove());
+    for (let index = queue.length - 1; index >= 0; index -= 1) {
+      if (queue[index]?.element === element) {
+        queue.splice(index, 1);
+      }
+    }
+  }
+
+  /** Re-renders that keep the same text should not cost another translation request. */
+  function hasSourceChanged(element: HTMLElement): boolean {
+    const previous = segments.get(element);
+    if (!previous) {
+      return true;
+    }
+
+    const current = createSegments(element);
+    return (
+      current.length !== previous.length ||
+      current.some((segment, index) => segment.text !== previous[index]?.text)
+    );
+  }
+
+  /** False once the segment's source text changed after it was read, so a response is stale. */
+  function isCurrent(segment: Segment): boolean {
+    return (
+      segments.get(segment.element)?.includes(segment) === true &&
+      createSegments(segment.element).some((current) => current.text === segment.text)
+    );
   }
 
   function handleIntersection(entries: IntersectionObserverEntry[]): void {
@@ -163,10 +226,7 @@ export function createPageTranslator(translate: TranslateRequest): PageTranslato
 
       const element = entry.target as HTMLElement;
       intersectionObserver?.unobserve(element);
-      const segment = segments.get(element);
-      if (segment) {
-        queue.push(segment);
-      }
+      queue.push(...(segments.get(element) ?? []));
     }
 
     scheduleFlush();
@@ -218,7 +278,9 @@ export function createPageTranslator(translate: TranslateRequest): PageTranslato
       }
 
       batch.forEach((segment, index) => {
-        insertTranslation(segment, response.translations[index] ?? "");
+        if (isCurrent(segment)) {
+          insertTranslation(segment, response.translations[index] ?? "");
+        }
       });
       translatedCount += batch.length;
     } catch (error) {
@@ -227,7 +289,9 @@ export function createPageTranslator(translate: TranslateRequest): PageTranslato
       }
 
       failedCount += batch.length;
-      batch.forEach((segment) => segment.element.setAttribute(STATE_ATTRIBUTE, "error"));
+      batch
+        .filter(isCurrent)
+        .forEach((segment) => segment.element.setAttribute(STATE_ATTRIBUTE, "error"));
       const message = error instanceof Error && error.message ? error.message : "Translation failed.";
       toast.show(`Translation failed: ${message}`, true);
       if (/not configured/i.test(message)) {
@@ -269,26 +333,42 @@ export function createPageTranslator(translate: TranslateRequest): PageTranslato
   };
 }
 
-function createSegment(element: HTMLElement): Segment | null {
-  if (element.closest(SKIP_ANCESTOR_SELECTOR) || element.getClientRects().length === 0) {
-    return null;
+function createSegments(element: HTMLElement): Segment[] {
+  if (
+    element.closest(SKIP_ANCESTOR_SELECTOR) ||
+    element.isContentEditable ||
+    element.getClientRects().length === 0
+  ) {
+    return [];
   }
 
+  // Each line of a plain div separated by <br> is its own segment, translated right after
+  // that line; text in other blocks is read up to the first nested container.
   const isDiv = element.tagName === "DIV";
+  const runs: { text: string; before: Node | null }[] = [];
   let text = "";
-  let before: Node | null = null;
+  let stoppedAtContainer = false;
   for (const child of element.childNodes) {
+    // Inserted translations are block-level, so they must not end a run when re-reading.
+    if (isOwnNode(child)) {
+      continue;
+    }
     if (child instanceof HTMLElement && isContainer(child)) {
-      before = child;
+      runs.push({ text, before: child });
+      stoppedAtContainer = true;
       break;
     }
 
     if (isDiv && child instanceof HTMLElement && child.tagName === "BR") {
-      before = child;
-      break;
+      runs.push({ text, before: child.nextSibling });
+      text = "";
+      continue;
     }
 
     text += getNodeText(child);
+  }
+  if (!stoppedAtContainer) {
+    runs.push({ text, before: null });
   }
 
   // Plain divs are translated when they hold text directly or contain only inline content,
@@ -296,20 +376,18 @@ function createSegment(element: HTMLElement): Segment | null {
   const hasDirectText = [...element.childNodes].some(
     (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()
   );
-  if (isDiv && before && !hasDirectText) {
-    return null;
+  if (isDiv && stoppedAtContainer && !hasDirectText) {
+    return [];
   }
 
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length < 2 || !/\p{L}/u.test(normalized)) {
-    return null;
-  }
+  return runs.flatMap(({ text: runText, before }) => {
+    const normalized = runText.replace(/\s+/g, " ").trim();
+    if (normalized.length < 2 || !/\p{L}/u.test(normalized)) {
+      return [];
+    }
 
-  return {
-    element,
-    before,
-    text: normalized.slice(0, MAX_TRANSLATE_SEGMENT_LENGTH)
-  };
+    return [{ element, before, text: normalized.slice(0, MAX_TRANSLATE_SEGMENT_LENGTH) }];
+  });
 }
 
 function isContainer(element: HTMLElement): boolean {
@@ -325,11 +403,14 @@ function getNodeText(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) {
     return node.textContent ?? "";
   }
-  if (!(node instanceof Element) || node.matches(SKIP_TEXT_SELECTOR)) {
+  if (!(node instanceof Element) || node.matches(SKIP_DESCENDANT_SELECTOR)) {
     return "";
   }
   if (node.tagName === "BR") {
     return " ";
+  }
+  if (isPrivateOrHidden(node)) {
+    return "";
   }
 
   let text = "";
@@ -338,6 +419,19 @@ function getNodeText(node: Node): string {
   }
 
   return text;
+}
+
+function isPrivateOrHidden(element: Element): boolean {
+  if (element instanceof HTMLElement && element.isContentEditable) {
+    return true;
+  }
+
+  const style = getComputedStyle(element);
+  return style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse";
+}
+
+function isOwnNode(node: Node): boolean {
+  return node instanceof Element && node.matches(OWN_NODE_SELECTOR);
 }
 
 function insertTranslation(segment: Segment, translation: string): void {
