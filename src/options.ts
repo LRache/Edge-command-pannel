@@ -1,9 +1,11 @@
 import {
   AI_SETTINGS_STORAGE_KEY,
   DEFAULT_AI_SETTINGS,
+  formatHeaderLines,
   getOriginPattern,
   normalizeAiSettings,
   normalizeBaseUrl,
+  parseHeaderLines,
   type AiSettings
 } from "./ai-settings";
 import {
@@ -12,6 +14,11 @@ import {
   URL_MAPPINGS_STORAGE_KEY,
   type UrlMapping
 } from "./url-mappings";
+import {
+  EYE_CARE_DOMAINS_STORAGE_KEY,
+  normalizeEyeCareDomain,
+  normalizeEyeCareDomains
+} from "./eye-care";
 import {
   getErrorMessage,
   MESSAGE_TYPES,
@@ -25,6 +32,8 @@ const form = getElement<HTMLFormElement>("ai-settings-form");
 const baseUrlInput = getElement<HTMLInputElement>("base-url");
 const modelInput = getElement<HTMLInputElement>("model");
 const apiKeyInput = getElement<HTMLInputElement>("api-key");
+const translateLanguageInput = getElement<HTMLInputElement>("translate-language");
+const customHeadersInput = getElement<HTMLTextAreaElement>("custom-headers");
 const status = getElement<HTMLDivElement>("status");
 const saveButton = getElement<HTMLButtonElement>("save");
 const mappingForm = getElement<HTMLFormElement>("mapping-form");
@@ -36,11 +45,16 @@ const mappingCancelButton = getElement<HTMLButtonElement>("mapping-cancel");
 const mappingStatus = getElement<HTMLDivElement>("mapping-status");
 const mappingList = getElement<HTMLDivElement>("mapping-list");
 const mappingCount = getElement<HTMLSpanElement>("mapping-count");
+const eyeCareForm = getElement<HTMLFormElement>("eye-care-form");
+const eyeCareDomainsInput = getElement<HTMLTextAreaElement>("eye-care-domains");
+const eyeCareSaveButton = getElement<HTMLButtonElement>("eye-care-save");
+const eyeCareStatus = getElement<HTMLDivElement>("eye-care-status");
 let mappings: UrlMapping[] = [];
 let editingMappingSnapshot: UrlMapping | null = null;
 
 void loadSettings();
 void loadMappings();
+void loadEyeCareDomains();
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   void saveSettings();
@@ -50,6 +64,18 @@ mappingForm.addEventListener("submit", (event) => {
   void saveMapping();
 });
 mappingCancelButton.addEventListener("click", resetMappingForm);
+eyeCareForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void saveEyeCareDomains();
+});
+extensionApi.storage.onChanged.addListener((changes, areaName) => {
+  if (
+    areaName === "local" &&
+    Object.prototype.hasOwnProperty.call(changes, EYE_CARE_DOMAINS_STORAGE_KEY)
+  ) {
+    renderEyeCareDomains(changes[EYE_CARE_DOMAINS_STORAGE_KEY]?.newValue);
+  }
+});
 extensionApi.storage.onChanged.addListener((changes, areaName) => {
   if (
     areaName !== "local" ||
@@ -77,6 +103,8 @@ async function loadSettings(): Promise<void> {
   baseUrlInput.value = settings.baseUrl;
   modelInput.value = settings.model;
   apiKeyInput.value = settings.apiKey;
+  translateLanguageInput.value = settings.translateTargetLanguage;
+  customHeadersInput.value = formatHeaderLines(settings.headers);
 }
 
 async function saveSettings(): Promise<void> {
@@ -87,7 +115,11 @@ async function saveSettings(): Promise<void> {
     const settings: AiSettings = {
       baseUrl: normalizeBaseUrl(baseUrlInput.value),
       model: modelInput.value.trim(),
-      apiKey: apiKeyInput.value.trim()
+      apiKey: apiKeyInput.value.trim(),
+      translateTargetLanguage:
+        translateLanguageInput.value.trim().slice(0, 80) ||
+        DEFAULT_AI_SETTINGS.translateTargetLanguage,
+      headers: parseHeaderLines(customHeadersInput.value)
     };
     if (!settings.model) {
       throw new Error("Model is required.");
@@ -263,6 +295,39 @@ function resetMappingForm(): void {
   mappingCancelButton.hidden = true;
 }
 
+async function loadEyeCareDomains(): Promise<void> {
+  const values = await extensionApi.storage.local.get(EYE_CARE_DOMAINS_STORAGE_KEY);
+  renderEyeCareDomains(values[EYE_CARE_DOMAINS_STORAGE_KEY]);
+}
+
+function renderEyeCareDomains(value: unknown): void {
+  eyeCareDomainsInput.value = normalizeEyeCareDomains(value).join("\n");
+}
+
+async function saveEyeCareDomains(): Promise<void> {
+  const lines = eyeCareDomainsInput.value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const invalid = lines.find((line) => !normalizeEyeCareDomain(line));
+  if (invalid) {
+    setEyeCareStatus(`Invalid domain: ${invalid}`, "error");
+    return;
+  }
+
+  eyeCareSaveButton.disabled = true;
+  try {
+    const domains = normalizeEyeCareDomains(lines);
+    await extensionApi.storage.local.set({ [EYE_CARE_DOMAINS_STORAGE_KEY]: domains });
+    renderEyeCareDomains(domains);
+    setEyeCareStatus(`Saved ${domains.length} site${domains.length === 1 ? "" : "s"}.`, "success");
+  } catch (error) {
+    setEyeCareStatus(getErrorMessage(error, "Unable to save eye care sites."), "error");
+  } finally {
+    eyeCareSaveButton.disabled = false;
+  }
+}
+
 async function readStoredSettings(): Promise<AiSettings | null> {
   const values = await extensionApi.storage.local.get(AI_SETTINGS_STORAGE_KEY);
   if (!Object.prototype.hasOwnProperty.call(values, AI_SETTINGS_STORAGE_KEY)) {
@@ -387,6 +452,11 @@ function setStatus(message: string, kind: "normal" | "success" | "error"): void 
 function setMappingStatus(message: string, kind: "success" | "error"): void {
   mappingStatus.textContent = message;
   mappingStatus.dataset.kind = kind;
+}
+
+function setEyeCareStatus(message: string, kind: "success" | "error"): void {
+  eyeCareStatus.textContent = message;
+  eyeCareStatus.dataset.kind = kind;
 }
 
 function getElement<T extends HTMLElement>(id: string): T {

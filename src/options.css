@@ -85,6 +85,21 @@ input {
   box-sizing: border-box;
 }
 
+textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 12px;
+  border: 1px solid #cbd1db;
+  border-radius: 7px;
+  outline: none;
+  background: #ffffff;
+  color: #20242b;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+textarea:focus,
 input:focus {
   border-color: #146cc8;
   box-shadow: 0 0 0 3px rgba(20, 108, 200, 0.14);
@@ -138,18 +153,21 @@ button[hidden] {
 
 #status,
 #mapping-status,
+#eye-care-status,
 #mapping-count {
   color: #616b7b;
   font-size: 13px;
 }
 
 #status[data-kind="success"],
-#mapping-status[data-kind="success"] {
+#mapping-status[data-kind="success"],
+#eye-care-status[data-kind="success"] {
   color: #157347;
 }
 
 #status[data-kind="error"],
-#mapping-status[data-kind="error"] {
+#mapping-status[data-kind="error"],
+#eye-care-status[data-kind="error"] {
   color: #b42318;
 }
 
@@ -233,7 +251,8 @@ button[hidden] {
   }
 
   main,
-  input {
+  input,
+  textarea {
     background: #25262a;
     color: #e7e9ed;
   }
@@ -243,7 +262,8 @@ button[hidden] {
   .settings-section,
   .mapping-list,
   .mapping-row,
-  input {
+  input,
+  textarea {
     border-color: #3c3e45;
   }
 
@@ -252,6 +272,7 @@ button[hidden] {
   .hint,
   #status,
   #mapping-status,
+  #eye-care-status,
   #mapping-count,
   .empty {
     color: #a9afba;

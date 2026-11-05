@@ -1,7 +1,9 @@
 import { buildSearchText, normalizeSearchTerm, normalizeSearchTerms } from "./pinyin";
 import { extractPageContext } from "./page-context";
 import { renderMarkdown } from "./markdown";
+import { createPageTranslator } from "./page-translator";
 import {
+  createSessionId,
   getErrorMessage,
   isPanelRequest,
   MAX_ASK_QUESTION_LENGTH,
@@ -15,6 +17,12 @@ import {
   type Theme
 } from "./messages";
 import type { UrlMapping } from "./url-mappings";
+import {
+  EYE_CARE_DOMAINS_STORAGE_KEY,
+  isEyeCareDomainMatch,
+  normalizeEyeCareDomain,
+  normalizeEyeCareDomains
+} from "./eye-care";
 
 const extensionApi = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser ?? chrome;
 
@@ -33,6 +41,7 @@ type ItemType = (typeof ITEM_TYPES)[keyof typeof ITEM_TYPES];
 type CommandAction =
   | "show-built-in-commands"
   | "toggle-transparent-panel"
+  | "toggle-eye-care"
   | "new-tab"
   | "close-current-tab"
   | "copy-current-tab"
@@ -40,6 +49,7 @@ type CommandAction =
   | "navigate-current-tab"
   | "open-update-page"
   | "ask-current-page"
+  | "translate-page"
   | "open-ai-settings"
   | "create-url-mapping";
 
@@ -101,6 +111,7 @@ interface PanelState {
   asking: boolean;
   askRequestId: number;
   pageContext: PageContext | null;
+  askSessionId: string | null;
   pendingMappingName: string;
 }
 
@@ -154,12 +165,30 @@ interface RenderOptions {
     },
     {
       type: ITEM_TYPES.COMMAND,
+      id: "eye-care-toggle-site",
+      title: "Eye Care: Toggle for This Site",
+      subtitle: "Apply a warm, low blue light tint to every page on this domain",
+      iconText: "护",
+      action: "toggle-eye-care",
+      aliases: "eye care eyecare protect night warm filter blue light reading mode site domain 护眼 护眼模式 夜间 暖色 蓝光 阅读模式 huyan huyanmoshi hy nuanse languang"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
       id: "ask-current-page",
       title: "AI: Ask About This Page",
       subtitle: "Ask a question using the visible text on the current page",
       iconText: "AI",
       action: "ask-current-page",
       aliases: "ask ai page question current page summarize 询问 页面 问当前页面 总结页面 xunwen yemian zongjie"
+    },
+    {
+      type: ITEM_TYPES.COMMAND,
+      id: "translate-page",
+      title: "AI: Translate Page",
+      subtitle: "Show translations below the original text; run again to remove them",
+      iconText: "译",
+      action: "translate-page",
+      aliases: "translate translation bilingual page ai 翻译 翻译页面 双语 对照翻译 fanyi fanyiyemian shuangyu fy"
     },
     {
       type: ITEM_TYPES.COMMAND,
@@ -247,8 +276,17 @@ interface RenderOptions {
     asking: false,
     askRequestId: 0,
     pageContext: null,
+    askSessionId: null,
     pendingMappingName: ""
   };
+
+  const pageTranslator = createPageTranslator((segments, sessionId) =>
+    sendMessage<{ translations: string[] }>({
+      type: MESSAGE_TYPES.TRANSLATE_SEGMENTS,
+      segments,
+      sessionId
+    })
+  );
 
   const searchTextCache = new WeakMap<PanelItem, Map<SearchableField, string>>();
 
@@ -286,6 +324,7 @@ interface RenderOptions {
     state.mode = "search";
     state.asking = false;
     state.pageContext = null;
+    state.askSessionId = null;
     state.pendingMappingName = "";
     state.askRequestId += 1;
     elements.input.value = "";
@@ -898,11 +937,30 @@ interface RenderOptions {
     body.append(title, url);
     option.append(icon, body);
 
-    if (item.type === ITEM_TYPES.TAB && item.active) {
-      const active = document.createElement("span");
-      active.className = "ecp-active";
-      active.textContent = "Active";
-      option.append(active);
+    if (item.type === ITEM_TYPES.TAB) {
+      const actions = document.createElement("span");
+      actions.className = "ecp-item-actions";
+
+      if (item.active) {
+        const active = document.createElement("span");
+        active.className = "ecp-active";
+        active.textContent = "Active";
+        actions.append(active);
+      }
+
+      const close = document.createElement("span");
+      close.className = "ecp-close";
+      close.setAttribute("role", "button");
+      close.setAttribute("aria-label", "Close tab");
+      close.title = "Close tab (Delete)";
+      close.textContent = "×";
+      close.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void closeTabItem(item);
+      });
+      actions.append(close);
+      option.append(actions);
     }
 
     return option;
@@ -991,6 +1049,15 @@ interface RenderOptions {
       return;
     }
 
+    if (event.key === "Delete") {
+      const selected = state.visibleItems[state.selectedIndex];
+      if (selected?.type === ITEM_TYPES.TAB) {
+        event.preventDefault();
+        void closeTabItem(selected);
+      }
+      return;
+    }
+
     if (event.key === "Enter") {
       event.preventDefault();
       selectItem(state.selectedIndex);
@@ -1058,6 +1125,33 @@ interface RenderOptions {
       type: MESSAGE_TYPES.ACTIVATE_TAB,
       tabId: tab.id
     });
+  }
+
+  async function closeTabItem(tab: TabItem): Promise<void> {
+    if (!tab?.id) {
+      setStatus("Invalid tab.");
+      return;
+    }
+
+    setStatus(`Closing ${tab.title || "tab"}...`);
+    const response = await sendMessage({ type: MESSAGE_TYPES.CLOSE_TAB, tabId: tab.id });
+    if (!response?.ok) {
+      setStatus(response?.error || "Unable to close tab.");
+      return;
+    }
+
+    const removedVisibleIndex = state.visibleItems.findIndex(
+      (item) => item.type === ITEM_TYPES.TAB && item.id === tab.id
+    );
+    state.sections[ITEM_TYPES.TAB] = state.sections[ITEM_TYPES.TAB].filter(
+      (item) => item.id !== tab.id
+    );
+    applyFilter(ensurePanel().input.value);
+    if (removedVisibleIndex >= 0 && state.selectedIndex > removedVisibleIndex) {
+      state.selectedIndex = Math.max(0, state.selectedIndex - 1);
+    }
+    syncSelectedItem();
+    setStatus(`Closed ${tab.title || "tab"}.`);
   }
 
   async function openBookmark(bookmark: BookmarkItem): Promise<ActionResponse> {
@@ -1134,6 +1228,15 @@ interface RenderOptions {
       return { ok: true, keepOpen: true };
     }
 
+    if (command.action === "toggle-eye-care") {
+      const enabled = await toggleEyeCareForCurrentSite();
+      if (enabled === null) {
+        return { ok: false, error: "Eye care is not available on this page." };
+      }
+      setStatus(`Eye care ${enabled ? "enabled" : "disabled"} for ${location.hostname}.`);
+      return { ok: true, keepOpen: true };
+    }
+
     if (command.action === "ask-current-page") {
       enterAskMode();
       if (command.question) {
@@ -1141,6 +1244,15 @@ interface RenderOptions {
         void submitAskQuestion(command.question);
       }
       return { ok: true, keepOpen: true };
+    }
+
+    if (command.action === "translate-page") {
+      if (pageTranslator.isActive()) {
+        pageTranslator.stop();
+      } else {
+        pageTranslator.start();
+      }
+      return { ok: true };
     }
 
     if (command.action === "open-ai-settings") {
@@ -1169,6 +1281,24 @@ interface RenderOptions {
     }
 
     return response;
+  }
+
+  /** Returns whether eye care is enabled for the current host after toggling, or null if unsupported. */
+  async function toggleEyeCareForCurrentSite(): Promise<boolean | null> {
+    const hostname = location.hostname;
+    const domain = normalizeEyeCareDomain(hostname.replace(/^www\./, ""));
+    if (!domain) {
+      return null;
+    }
+
+    const values = await extensionApi.storage.local.get(EYE_CARE_DOMAINS_STORAGE_KEY);
+    const domains = normalizeEyeCareDomains(values[EYE_CARE_DOMAINS_STORAGE_KEY]);
+    const remaining = domains.filter((entry) => !isEyeCareDomainMatch(hostname, entry));
+    const enabled = remaining.length === domains.length;
+    await extensionApi.storage.local.set({
+      [EYE_CARE_DOMAINS_STORAGE_KEY]: enabled ? [...domains, domain] : remaining
+    });
+    return enabled;
   }
 
   function enterMappingMode(): void {
@@ -1323,6 +1453,7 @@ interface RenderOptions {
     state.mode = "ask";
     state.asking = false;
     state.pageContext = extractPageContext(document);
+    state.askSessionId = createSessionId();
     state.visibleItems = [];
     state.selectedIndex = 0;
 
@@ -1346,6 +1477,7 @@ interface RenderOptions {
     state.mode = "search";
     state.asking = false;
     state.pageContext = null;
+    state.askSessionId = null;
     const input = ensurePanel().input;
     input.value = "";
     configureInputForMode();
@@ -1386,7 +1518,8 @@ interface RenderOptions {
       const response = await sendMessage<{ answer: string }>({
         type: MESSAGE_TYPES.ASK_PAGE,
         question,
-        page
+        page,
+        sessionId: state.askSessionId ?? undefined
       });
       if (requestId !== state.askRequestId || state.mode !== "ask") {
         return;

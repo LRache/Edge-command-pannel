@@ -12,13 +12,13 @@
         <p class="eyebrow">Edge Command Panel</p>
         <h1>Settings</h1>
         <p class="description">
-          Configure AI access and custom command-panel URL shortcuts.
+          Configure AI access, custom command-panel URL shortcuts, and eye care sites.
         </p>
       </header>
 
       <section class="settings-section" aria-labelledby="ai-settings-title">
         <h2 id="ai-settings-title">AI provider</h2>
-        <p class="section-description">Configure an OpenAI-compatible service for the <code>ask</code> command.</p>
+        <p class="section-description">Configure an OpenAI-compatible service for the <code>ask</code> and <code>translate</code> commands.</p>
         <form id="ai-settings-form">
           <label for="base-url">API base URL</label>
           <input id="base-url" name="base-url" type="url" required spellcheck="false">
@@ -31,7 +31,19 @@
           <input id="api-key" name="api-key" type="password" required autocomplete="off" spellcheck="false">
           <p class="hint">
             The key is stored in this browser profile. Page text is sent only when you submit an
-            <code>ask</code> question.
+            <code>ask</code> question or run <code>translate</code>.
+          </p>
+
+          <label for="translate-language">Translation target language</label>
+          <input id="translate-language" name="translate-language" type="text" maxlength="80" spellcheck="false" placeholder="Simplified Chinese">
+          <p class="hint">Used by the <code>translate</code> command, for example <code>Simplified Chinese</code>, <code>English</code>, or <code>日本語</code>.</p>
+
+          <label for="custom-headers">Custom request headers</label>
+          <textarea id="custom-headers" name="custom-headers" rows="3" spellcheck="false" placeholder="x-opencode-session: {{session}}"></textarea>
+          <p class="hint">
+            Optional. One <code>Name: value</code> per line, sent with every AI request.
+            <code>{{session}}</code> is replaced with an ID that stays the same for one Ask conversation
+            or one page translation, which providers such as OpenCode Go use for routing and prompt caching.
           </p>
 
           <div class="actions">
@@ -64,6 +76,20 @@
         </form>
 
         <div id="mapping-list" class="mapping-list"></div>
+      </section>
+
+      <section class="settings-section" aria-labelledby="eye-care-title">
+        <h2 id="eye-care-title">Eye care</h2>
+        <p class="section-description">Apply a warm, low blue light tint to the listed sites. You can also run <code>Eye Care: Toggle for This Site</code> from the command panel.</p>
+        <form id="eye-care-form">
+          <label for="eye-care-domains">Domains</label>
+          <textarea id="eye-care-domains" name="eye-care-domains" rows="5" spellcheck="false" placeholder="example.com&#10;docs.github.com"></textarea>
+          <p class="hint">One domain per line. A domain also covers its subdomains, so <code>example.com</code> includes <code>www.example.com</code>.</p>
+          <div class="actions">
+            <button id="eye-care-save" type="submit">Save eye care sites</button>
+            <div id="eye-care-status" role="status" aria-live="polite"></div>
+          </div>
+        </form>
       </section>
     </main>
     <script src="options.js"></script>

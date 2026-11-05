@@ -31,6 +31,11 @@
       "js": ["src/vendor/pinyin-pro.js", "src/content.js"],
       "css": ["src/panel.css"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["src/eye-care-content.js"],
+      "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
