@@ -264,7 +264,7 @@ async function getCurrentWindowTabs(windowId?: number): Promise<PanelTab[]> {
       id: tab.id ?? -1,
       title: tab.title || "Untitled",
       url: tab.url || "",
-      favIconUrl: tab.favIconUrl || "",
+      favIconUrl: getTabFaviconUrl(tab),
       active: Boolean(tab.active)
     }));
 }
@@ -758,6 +758,19 @@ function getFaviconUrl(pageUrl: string): string {
   faviconUrl.searchParams.set("pageUrl", pageUrl);
   faviconUrl.searchParams.set("size", "32");
   return faviconUrl.toString();
+}
+
+function getTabFaviconUrl(tab: chrome.tabs.Tab): string {
+  // Resolve the icon through the extension favicon endpoint instead of letting
+  // the page load `tab.favIconUrl` directly. A favicon served from a LAN or
+  // loopback address would make the current page issue a local-network
+  // request, which triggers the browser's Local Network Access prompt.
+  const url = tab.url || "";
+  if (isSupportedTabUrl(url)) {
+    return getFaviconUrl(url) || tab.favIconUrl || "";
+  }
+
+  return tab.favIconUrl || "";
 }
 
 function isFirefoxRuntime(): boolean {
